@@ -5,7 +5,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -53,11 +52,16 @@ export default function SalesGrid({
   onEditSale,
   onDeleteSale,
 }: SalesGridProps): React.JSX.Element {
+  // DEBUG LOGS
+  console.log('🎨 SalesGrid rendered');
+  console.log('🎨 Received sales count:', sales?.length || 0);
+  
   const [role, setRole] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const loadRole = async () => {
       const userRole = await AsyncStorage.getItem('role');
+      console.log('🔑 SalesGrid: User role loaded:', userRole);
       setRole(userRole);
     };
     loadRole();
@@ -99,8 +103,11 @@ export default function SalesGrid({
   };
 
   const sortedSales = [...sales].sort((a, b) => b.id - a.id);
+  
+  console.log('📊 SalesGrid: Sorted sales count:', sortedSales.length);
 
   if (sortedSales.length === 0) {
+    console.log('⚠️ SalesGrid: Showing empty state');
     return (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyText}>No tienes ningún pedido</Text>
@@ -109,11 +116,27 @@ export default function SalesGrid({
   }
 
   const canEditDelete = role === 'admin' || role === 'superadmin' || role === 'staff' || role === 'iT';
+  
+  console.log('✅ SalesGrid: Rendering', sortedSales.length, 'sale cards');
 
   return (
-    <ScrollView>
-      {sortedSales.map((sale) => {
+    <View>
+      {/* TEST CARD - Should be visible immediately */}
+      <View style={[styles.saleCard, { backgroundColor: '#ffeb3b', borderColor: '#f00', borderWidth: 5 }]}>
+        <Text style={{ fontSize: 24, fontWeight: 'bold', color: '#000' }}>
+          🔥 TEST CARD - If you see this, rendering works!
+        </Text>
+        <Text style={{ fontSize: 18, marginTop: 10 }}>
+          Total sales to render: {sortedSales.length}
+        </Text>
+      </View>
+
+      {sortedSales.map((sale, saleIndex) => {
         const discount = isNaN(Number(sale.discount)) ? 0 : Number(sale.discount);
+        
+        if (saleIndex < 3) {
+          console.log(`📄 Rendering sale ${saleIndex}:`, sale.id, sale.nombre);
+        }
         
         return (
           <View key={sale.id} style={styles.saleCard}>
@@ -237,7 +260,7 @@ export default function SalesGrid({
           </View>
         );
       })}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -255,8 +278,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 16,
     marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#ddd',
+    borderWidth: 3,
+    borderColor: '#ff0000',  // RED BORDER to see if cards exist
+    minHeight: 200,  // Force minimum height
   },
   saleHeader: {
     marginBottom: 12,

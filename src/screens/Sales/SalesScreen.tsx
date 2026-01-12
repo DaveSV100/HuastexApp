@@ -6,13 +6,13 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  ScrollView,
+  FlatList,
   Alert,
   ActivityIndicator,
 } from 'react-native';
 import api from '../../api';
-import SalesGrid from '../../components/SalesGrid';
 import SaleModal from '../../components/SaleModal';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface Sale {
   id: number;
@@ -45,9 +45,16 @@ export default function SalesScreen(): React.JSX.Element {
   const [sales, setSales] = useState<Sale[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [role, setRole] = useState<string | null>(null);
+
+  const loadRole = async () => {
+    const userRole = await AsyncStorage.getItem('role');
+    setRole(userRole);
+  };
 
   useEffect(() => {
     fetchSales();
+    loadRole();
   }, []);
 
   const fetchSales = async () => {
@@ -55,7 +62,7 @@ export default function SalesScreen(): React.JSX.Element {
     try {
       const response = await api.get('/sales');
       setSales(response.data);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching sales:', error);
       Alert.alert('Error', 'No se pudieron cargar las ventas');
     } finally {
@@ -111,18 +118,177 @@ export default function SalesScreen(): React.JSX.Element {
     setSearchQuery(text.toLowerCase());
   };
 
-  const filteredSales = sales.filter(
-    (sale) =>
-      sale.id.toString().includes(searchQuery) ||
-      sale.nombre.toLowerCase().includes(searchQuery) ||
-      sale.products.some(
-        (product) =>
-          product.title && product.title.toLowerCase().includes(searchQuery)
-      )
-  );
+  const filteredSales = sales.filter((sale) => {
+    if (!sale) return false;
+    const matchesId = sale.id.toString().includes(searchQuery);
+    const matchesName = sale.nombre?.toLowerCase().includes(searchQuery);
+    const matchesProduct = sale.products?.some(
+      (product) =>
+        product?.title && product.title.toLowerCase().includes(searchQuery)
+    );
+    return matchesId || matchesName || matchesProduct;
+  });
 
-  return (
-    <View style={styles.container}>
+  const sortedSales = [...filteredSales].sort((a, b) => b.id - a.id);
+
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('es-ES', { timeZone: 'UTC' });
+  };
+
+  const formatProductTitles = (products: any[]) => {
+    if (!products) return '';
+    return products
+      .filter((product) => product !== null)
+      .map((product) => product.title || product.producto || 'Sin nombre')
+      .join(', ');
+  };
+
+  const formatPlazo = (plazo: any) => {
+    if (!plazo || !plazo.value || !plazo.unit) return '';
+    let rawPlazo = plazo;
+    if (typeof rawPlazo.value === 'string' && rawPlazo.value.trim().startsWith('{')) {
+      try {
+        rawPlazo = JSON.parse(rawPlazo.value);
+      } catch {}
+    }
+    const value = rawPlazo.value != null ? String(rawPlazo.value) : '';
+    const unit = ['days', 'weeks', 'months'].includes(rawPlazo.unit) ? rawPlazo.unit : 'weeks';
+    const label = unit === 'days' ? 'días' : unit === 'weeks' ? 'semanas' : 'meses';
+    return `${value} ${label}`;
+  };
+
+  const canEditDelete = role === 'admin' || role === 'superadmin' || role === 'staff' || role === 'iT';
+
+  const renderSaleItem = ({ item: sale }: { item: Sale }) => {
+    const discount = isNaN(Number(sale.discount)) ? 0 : Number(sale.discount);
+    
+    return (
+      <View style={styles.saleCard}>
+        <View style={styles.saleHeader}>
+          <Text style={styles.saleId}>ID: {sale.id}</Text>
+          <Text style={styles.saleName}>{sale.nombre}</Text>
+        </View>
+
+        <View style={styles.saleDetails}>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Productos: </Text>
+            {formatProductTitles(sale.products)}
+          </Text>
+
+          {sale.products &&
+            sale.products.filter((p) => p).map((product, index) => (
+              <View key={product.id || `product-${index}`} style={styles.productDetail}>
+                <Text style={styles.detailText}>
+                  <Text style={styles.detailLabel}>Producto: </Text>
+                  {product.title || product.producto || 'Sin nombre'}
+                  {product.serial_number ? ` (#Serie: ${product.serial_number})` : ''}
+                </Text>
+                <Text style={styles.detailText}>
+                  <Text style={styles.detailLabel}>Cantidad: </Text>
+                  {product.quantity}
+                </Text>
+                <Text style={styles.detailText}>
+                  <Text style={styles.detailLabel}>Precio Unitario: </Text>
+                  ${product.unit_price}
+                </Text>
+              </View>
+            ))}
+
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Precio Normal: </Text>${sale.precionormal}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Precio Promoción: </Text>${sale.preciopromocion}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Enganche: </Text>${sale.enganche}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Saldo Precio Promoción: </Text>
+            ${sale.saldo_precio_promocion}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Saldo Precio Normal: </Text>
+            ${sale.saldo_precio_normal}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Fecha de Vencimiento: </Text>
+            {formatDate(sale.fechavencimiento)}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Forma de Pago: </Text>
+            {sale.formadepago}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Descuento: </Text>
+            {discount}%
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Calle y Número: </Text>
+            {sale.calleynumero}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Ciudad: </Text>
+            {sale.ciudad}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Estado: </Text>
+            {sale.estado}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Fecha de compra: </Text>
+            {formatDate(sale.fecha)}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Plazo: </Text>
+            {formatPlazo(sale.plazo)}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Sucursal: </Text>
+            {sale.sucursal}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Agente de Ventas: </Text>
+            {sale.agentedeventas}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Email: </Text>
+            {sale.email}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Teléfono: </Text>
+            {sale.phone}
+          </Text>
+          <Text style={styles.detailText}>
+            <Text style={styles.detailLabel}>Aclaraciones: </Text>
+            {sale.aclaraciones}
+          </Text>
+        </View>
+
+        {canEditDelete && (
+          <View style={styles.actionsContainer}>
+            <TouchableOpacity
+              style={styles.editButton}
+              onPress={() => handleEditSale(sale)}
+            >
+              <Text style={styles.buttonText}>Editar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.deleteButton}
+              onPress={() => handleDeleteSale(sale.id)}
+            >
+              <Text style={styles.buttonText}>Eliminar</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  const renderHeader = () => (
+    <View>
       <Text style={styles.title}>Ventas</Text>
 
       <View style={styles.searchContainer}>
@@ -140,17 +306,24 @@ export default function SalesScreen(): React.JSX.Element {
       >
         <Text style={styles.newSaleButtonText}>Smart Venta</Text>
       </TouchableOpacity>
+    </View>
+  );
 
+  return (
+    <View style={styles.container}>
       {isLoading ? (
         <ActivityIndicator size="large" color="#007bff" style={styles.loader} />
       ) : (
-        <ScrollView style={styles.salesList}>
-          <SalesGrid
-            sales={filteredSales}
-            onEditSale={handleEditSale}
-            onDeleteSale={handleDeleteSale}
-          />
-        </ScrollView>
+        <FlatList
+          data={sortedSales}
+          keyExtractor={(item) => String(item.id)}
+          renderItem={renderSaleItem}
+          ListHeaderComponent={renderHeader}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>No tienes ningún pedido</Text>
+          }
+          contentContainerStyle={styles.listContent}
+        />
       )}
 
       {isSaleModalOpen && (
@@ -168,8 +341,11 @@ export default function SalesScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#f3f6fb',
+  },
+  listContent: {
     padding: 16,
+    paddingBottom: 100,
   },
   title: {
     fontSize: 24,
@@ -186,23 +362,96 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
+    backgroundColor: '#fff',
   },
   newSaleButton: {
     backgroundColor: '#007bff',
     padding: 14,
     borderRadius: 8,
-    marginBottom: 16,
     alignItems: 'center',
+    marginBottom: 16,
   },
   newSaleButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
-  salesList: {
+  saleCard: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  saleHeader: {
+    marginBottom: 12,
+  },
+  saleId: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+  },
+  saleName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  saleDetails: {
+    marginBottom: 12,
+  },
+  detailText: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 4,
+  },
+  detailLabel: {
+    fontWeight: '600',
+  },
+  productDetail: {
+    marginLeft: 12,
+    marginTop: 4,
+    marginBottom: 8,
+    paddingLeft: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: '#007bff',
+  },
+  actionsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  editButton: {
     flex: 1,
+    backgroundColor: '#007bff',
+    padding: 12,
+    borderRadius: 6,
+    marginRight: 8,
+    alignItems: 'center',
+  },
+  deleteButton: {
+    flex: 1,
+    backgroundColor: '#dc3545',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
   loader: {
     marginTop: 50,
+  },
+  emptyText: {
+    textAlign: 'center',
+    marginTop: 40,
+    fontSize: 16,
+    color: '#666',
   },
 });

@@ -12,7 +12,9 @@ import {
 } from 'react-native';
 import api from '../../api';
 import SaleModal from '../../components/SaleModal';
+import PaymentsModal from '../../components/PaymentsModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNavigation } from '@react-navigation/native';
 
 interface Sale {
   id: number;
@@ -39,8 +41,18 @@ interface Sale {
   firmadigital?: string;
 }
 
+interface SaleModalProps {
+  visible: boolean;
+  onClose: () => void;
+  onSaved: (data: any) => void;
+  initialData: any | null;
+}
+
 export default function SalesScreen(): React.JSX.Element {
+  const navigation = useNavigation();
   const [isSaleModalOpen, setIsSaleModalOpen] = useState(false);
+  const [isPaymentsModalOpen, setIsPaymentsModalOpen] = useState(false);
+  const [selectedSaleForPayment, setSelectedSaleForPayment] = useState<Sale | null>(null);
   const [editingSaleData, setEditingSaleData] = useState<Sale | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -114,6 +126,21 @@ export default function SalesScreen(): React.JSX.Element {
     );
   };
 
+  const handleRegisterPayment = (sale: Sale) => {
+    setSelectedSaleForPayment(sale);
+    setIsPaymentsModalOpen(true);
+  };
+
+  const handleClosePaymentsModal = () => {
+    setIsPaymentsModalOpen(false);
+    setSelectedSaleForPayment(null);
+  };
+
+  const handlePaymentSuccess = () => {
+    fetchSales();
+    handleClosePaymentsModal();
+  };
+
   const handleSearchChange = (text: string) => {
     setSearchQuery(text.toLowerCase());
   };
@@ -163,6 +190,8 @@ export default function SalesScreen(): React.JSX.Element {
 
   const renderSaleItem = ({ item: sale }: { item: Sale }) => {
     const discount = isNaN(Number(sale.discount)) ? 0 : Number(sale.discount);
+    const creditForms = ['Crédito', 'MSI', 'Apartado'];
+    const isCreditSale = creditForms.includes(sale.formadepago);
     
     return (
       <View style={styles.saleCard}>
@@ -267,6 +296,27 @@ export default function SalesScreen(): React.JSX.Element {
           </Text>
         </View>
 
+        {isCreditSale && (
+          <View style={styles.paymentButtonsContainer}>
+            {canEditDelete && (
+              <TouchableOpacity
+                style={styles.paymentButton}
+                onPress={() => handleRegisterPayment(sale)}
+              >
+                <Text style={styles.buttonText}>Registrar Abono</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={styles.viewPaymentsButton}
+              onPress={() => {
+                (navigation as any).navigate('Payments', { saleId: sale.id });
+              }}
+            >
+              <Text style={styles.buttonText}>Ver Pagos</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {canEditDelete && (
           <View style={styles.actionsContainer}>
             <TouchableOpacity
@@ -332,6 +382,15 @@ export default function SalesScreen(): React.JSX.Element {
           onClose={handleCloseSaleModal}
           onSaved={handleSaleSaved}
           initialData={editingSaleData}
+        />
+      )}
+
+      {isPaymentsModalOpen && selectedSaleForPayment && (
+        <PaymentsModal
+          visible={isPaymentsModalOpen}
+          sale={selectedSaleForPayment}
+          onClose={handleClosePaymentsModal}
+          onPaymentSuccess={handlePaymentSuccess}
         />
       )}
     </View>
@@ -424,6 +483,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 12,
+  },
+  paymentButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  paymentButton: {
+    flex: 1,
+    backgroundColor: '#28a745',
+    padding: 12,
+    borderRadius: 6,
+    marginRight: 8,
+    alignItems: 'center',
+  },
+  viewPaymentsButton: {
+    flex: 1,
+    backgroundColor: '#17a2b8',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
   },
   editButton: {
     flex: 1,

@@ -14,6 +14,7 @@ import UserScreen from '../screens/UserScreen/UserScreen';
 import InventoryScreen from '../screens/InventoryScreen';
 import UsScreen from '../screens/UsScreen';
 import FormsScreen from '../screens/FormsScreen';
+import PaymentsScreen from '../screens/PaymentsScreen';
 
 import Navbar from '../components/Navbar';
 
@@ -33,6 +34,7 @@ export default function AppNavigator() {
           <Stack.Screen name="Home" component={HomeScreen} />
           <Stack.Screen name="Dailyreport" component={ReportScreen} />
           <Stack.Screen name="Sales" component={SalesScreen} />
+          <Stack.Screen name="Payments" component={PaymentsScreen} />
           <Stack.Screen name="User" component={UserScreen} />
           <Stack.Screen name="Inventory" component={InventoryScreen} />
           <Stack.Screen name="Us" component={UsScreen} />

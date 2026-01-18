@@ -52,12 +52,12 @@ const Navbar = (props) => {
           <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('Electronics'); }}>
             <Text style={styles.menuItem}>Ventas</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('MyOrders'); }}>
+          {/* <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('MyOrders'); }}>
             <Text style={styles.menuItem}>Productos</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('User'); }}>
             <Text style={styles.menuItem}>Usuarios</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
           <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('Contact'); }}>
             <Text style={styles.menuItem}>Reporte diario</Text>
           </TouchableOpacity>
@@ -73,7 +73,7 @@ const Navbar = (props) => {
 const styles = StyleSheet.create({
   navbar: {
     backgroundColor: '#fff',
-    marginTop: 20,
+    marginTop: 0,
     paddingTop: 60,
     paddingBottom: 20,
     paddingHorizontal: 16,

@@ -13,8 +13,8 @@ export default function HomeScreen(): React.JSX.Element {
       <Button onPress={()=> navigation.navigate('Inventory')} title="Inventario"/>
       <Button onPress={()=> navigation.navigate('Sales')} title="Ventas"/>
       <Button onPress={()=> navigation.navigate('Dailyreport')} title="Reporte Diario"/>
-      <Button title="Productos"/>
-      <Button title="Usuarios"/>
+      {/* <Button title="Productos"/>
+      <Button title="Usuarios"/> */}
       <Button title="Cerrar Sesión" onPress={signOut}/>
     </View>
   );

@@ -337,30 +337,29 @@ export default function SalesScreen(): React.JSX.Element {
     );
   };
 
-  const renderHeader = () => (
-    <View>
-      <Text style={styles.title}>Ventas</Text>
-
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Buscar por ID, Nombre o Producto"
-          value={searchQuery}
-          onChangeText={handleSearchChange}
-        />
-      </View>
-
-      <TouchableOpacity
-        style={styles.newSaleButton}
-        onPress={handleCreateNewSale}
-      >
-        <Text style={styles.newSaleButtonText}>Smart Venta</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
   return (
     <View style={styles.container}>
+      {/* Header moved OUTSIDE of FlatList to prevent TextInput losing focus */}
+      <View style={styles.headerContainer}>
+        <Text style={styles.title}>Ventas</Text>
+
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Buscar por ID, Nombre o Producto"
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+          />
+        </View>
+
+        <TouchableOpacity
+          style={styles.newSaleButton}
+          onPress={handleCreateNewSale}
+        >
+          <Text style={styles.newSaleButtonText}>Smart Venta</Text>
+        </TouchableOpacity>
+      </View>
+
       {isLoading ? (
         <ActivityIndicator size="large" color="#007bff" style={styles.loader} />
       ) : (
@@ -368,7 +367,6 @@ export default function SalesScreen(): React.JSX.Element {
           data={sortedSales}
           keyExtractor={(item) => String(item.id)}
           renderItem={renderSaleItem}
-          ListHeaderComponent={renderHeader}
           ListEmptyComponent={
             <Text style={styles.emptyText}>No tienes ningún pedido</Text>
           }
@@ -402,8 +400,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f3f6fb',
   },
-  listContent: {
+  headerContainer: {
     padding: 16,
+    paddingBottom: 0,
+    backgroundColor: '#f3f6fb',
+  },
+  listContent: {
+    paddingHorizontal: 16,
     paddingBottom: 100,
   },
   title: {

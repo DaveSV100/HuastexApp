@@ -15,6 +15,7 @@ import {
 import { Picker } from '@react-native-picker/picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SignatureScreen from 'react-native-signature-canvas';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { buildIncomePayload } from '../utils/incoms';
 import api from '../api';
 
@@ -72,6 +73,10 @@ export default function SaleModal({
   const [signature, setSignature] = useState<string | null>(null);
   const [showSignature, setShowSignature] = useState(false);
   const signatureRef = useRef<any>(null);
+
+  // Date picker state
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [tempDate, setTempDate] = useState<Date>(new Date());
 
   const [formData, setFormData] = useState<SaleData>({
     nombre: '',
@@ -143,6 +148,9 @@ export default function SaleModal({
         typeof initialData.fecha === 'string' && initialData.fecha.includes('T')
           ? initialData.fecha.split('T')[0]
           : new Date(initialData.fecha).toISOString().split('T')[0];
+      
+      // Set the temp date for the picker
+      setTempDate(new Date(normalizedFecha));
     }
 
     let rawPlazo = initialData.plazo;
@@ -219,6 +227,49 @@ export default function SaleModal({
       setSignature(initialData.firmadigital);
     }
   }, [initialData, userBranch]);
+
+  // Date picker functions
+  const formatDateString = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const handleDateChange = (event: any, date?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+      if (date && event.type !== 'dismissed') {
+        setFormData(prev => ({
+          ...prev,
+          fecha: formatDateString(date),
+        }));
+      }
+    } else {
+      // iOS: just update temp date, don't save yet
+      if (date) {
+        setTempDate(date);
+      }
+    }
+  };
+
+  const showDatepicker = () => {
+    setTempDate(formData.fecha ? new Date(formData.fecha) : new Date());
+    setShowDatePicker(true);
+  };
+
+  const confirmDateSelection = () => {
+    // Save the temp date to formData
+    setFormData(prev => ({
+      ...prev,
+      fecha: formatDateString(tempDate),
+    }));
+    setShowDatePicker(false);
+  };
+
+  const cancelDateSelection = () => {
+    setShowDatePicker(false);
+  };
 
   const toggleMode = () => {
     setManualPricing((prev) => !prev);
@@ -340,8 +391,6 @@ export default function SaleModal({
     newSearchTerms[index] = '';
     setSearchTerms(newSearchTerms);
   };
-
-// Continuation of SaleModal.tsx...
 
   const addProductField = () => {
     setFormData((prev) => ({
@@ -524,10 +573,10 @@ export default function SaleModal({
         <View style={styles.signatureContainer}>
           <View style={styles.signatureHeader}>
             <TouchableOpacity onPress={() => setShowSignature(false)}>
-              <Text style={styles.signatureButton}>Cancelar</Text>
+              <Text style={styles.signatureHeaderButtonText}>Cancelar</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={clearSignature}>
-              <Text style={styles.signatureButton}>Limpiar</Text>
+              <Text style={styles.signatureHeaderButtonText}>Limpiar</Text>
             </TouchableOpacity>
           </View>
           <SignatureScreen
@@ -643,12 +692,32 @@ export default function SaleModal({
           />
 
           <Text style={styles.label}>Fecha *</Text>
-          <TextInput
-            style={styles.input}
-            value={formData.fecha}
-            onChangeText={(value) => handleInputChange('fecha', value)}
-            placeholder="YYYY-MM-DD"
-          />
+          <TouchableOpacity style={styles.dateButton} onPress={showDatepicker}>
+            <Text style={[styles.dateButtonText, !formData.fecha && styles.placeholderText]}>
+              {formData.fecha || 'Seleccionar fecha'}
+            </Text>
+          </TouchableOpacity>
+
+          {showDatePicker && (
+            <View style={styles.datePickerContainer}>
+              <DateTimePicker
+                value={tempDate}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={handleDateChange}
+              />
+              {Platform.OS === 'ios' && (
+                <View style={styles.dateButtonsRow}>
+                  <TouchableOpacity style={styles.dateCancelButton} onPress={cancelDateSelection}>
+                    <Text style={styles.dateCancelButtonText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.dateConfirmButton} onPress={confirmDateSelection}>
+                    <Text style={styles.dateConfirmButtonText}>Confirmar</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          )}
 
           <TouchableOpacity style={styles.toggleButton} onPress={toggleMode}>
             <Text style={styles.toggleButtonText}>
@@ -656,8 +725,6 @@ export default function SaleModal({
             </Text>
           </TouchableOpacity>
 
-          {/* Products section - see next artifact for rendering */}
-          
           <Text style={styles.sectionTitle}>Productos</Text>
           {formData.products.map((product, index) => (
             <View key={index} style={styles.productContainer}>
@@ -887,7 +954,6 @@ export default function SaleModal({
   );
 }
 
-// Styles for SaleModal...
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -943,6 +1009,54 @@ const styles = StyleSheet.create({
   textArea: {
     height: 100,
     textAlignVertical: 'top',
+  },
+  dateButton: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    padding: 12,
+    backgroundColor: '#fff',
+  },
+  dateButtonText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  placeholderText: {
+    color: '#999',
+  },
+  datePickerContainer: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    marginTop: 8,
+    padding: 8,
+  },
+  dateButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  dateCancelButton: {
+    flex: 1,
+    backgroundColor: '#6c757d',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  dateCancelButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  dateConfirmButton: {
+    flex: 1,
+    backgroundColor: '#007bff',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  dateConfirmButtonText: {
+    color: '#fff',
+    fontWeight: '600',
   },
   toggleButton: {
     backgroundColor: '#1c60d5',
@@ -1057,8 +1171,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     padding: 16,
+    paddingTop: 50,
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',
+  },
+  signatureHeaderButtonText: {
+    color: '#007bff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   signatureSaveButton: {
     backgroundColor: '#28a745',

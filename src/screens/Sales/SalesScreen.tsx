@@ -6,6 +6,7 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
+  Image,
   FlatList,
   Alert,
   ActivityIndicator,
@@ -14,7 +15,7 @@ import api from '../../api';
 import SaleModal from '../../components/SaleModal';
 import PaymentsModal from '../../components/PaymentsModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, CommonActions } from '@react-navigation/native';
 
 interface Sale {
   id: number;
@@ -58,6 +59,8 @@ export default function SalesScreen(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [role, setRole] = useState<string | null>(null);
+
+const BackImg = require('../../../Assets/back.png'); 
 
   const loadRole = async () => {
     const userRole = await AsyncStorage.getItem('role');
@@ -194,7 +197,8 @@ export default function SalesScreen(): React.JSX.Element {
     const isCreditSale = creditForms.includes(sale.formadepago);
     
     return (
-      <View style={styles.saleCard}>
+      <>
+        <View style={styles.saleCard}>
         <View style={styles.saleHeader}>
           <Text style={styles.saleId}>ID: {sale.id}</Text>
           <Text style={styles.saleName}>{sale.nombre}</Text>
@@ -334,6 +338,7 @@ export default function SalesScreen(): React.JSX.Element {
           </View>
         )}
       </View>
+      </>
     );
   };
 
@@ -341,6 +346,14 @@ export default function SalesScreen(): React.JSX.Element {
     <View style={styles.container}>
       {/* Header moved OUTSIDE of FlatList to prevent TextInput losing focus */}
       <View style={styles.headerContainer}>
+        <TouchableOpacity onPress={() => navigation.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [{ name: 'Home' }],
+        })
+      )}>
+        <Image source={BackImg} style={styles.backIcon} />
+      </TouchableOpacity>
         <Text style={styles.title}>Ventas</Text>
 
         <View style={styles.searchContainer}>
@@ -396,6 +409,9 @@ export default function SalesScreen(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
+  backIcon: { 
+    width: 40, height: 40, resizeMode: 'contain'
+  },
   container: {
     flex: 1,
     backgroundColor: '#f3f6fb',

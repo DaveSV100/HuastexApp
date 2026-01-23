@@ -19,6 +19,7 @@ export function AuthProvider({ children }) {
           const decoded = parseJwt(token);
           if (decoded) {
              setUser({
+               name:   decoded.name,
                email:  decoded.email,
                role:   decoded.role,
                branch: decoded.branch,
@@ -54,7 +55,7 @@ export function AuthProvider({ children }) {
       ]);
 
       // update context
-      const newUser = { email, role: decoded.role, branch: decoded.branch };
+      const newUser = { name: decoded.name, email, role: decoded.role, branch: decoded.branch };
       setUser(newUser);
       return newUser;
 

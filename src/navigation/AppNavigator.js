@@ -15,7 +15,7 @@ import InventoryScreen from '../screens/InventoryScreen';
 import UsScreen from '../screens/UsScreen';
 import FormsScreen from '../screens/FormsScreen';
 import PaymentsScreen from '../screens/PaymentsScreen';
-
+import SignUpScreen from '../screens/SignUpScreen';
 import Navbar from '../components/Navbar';
 
 const Stack = createNativeStackNavigator();
@@ -47,6 +47,7 @@ export default function AppNavigator() {
           screenOptions={{ headerShown: false }}
         >
           <Stack.Screen name="SignIn" component={SignInScreen} />
+          <Stack.Screen name="SignUp" component={SignUpScreen} />
         </Stack.Navigator>
       )}
     </>

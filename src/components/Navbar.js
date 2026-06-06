@@ -1,14 +1,22 @@
 // src/components/Navbar.tsx
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { CartContext } from '../contexts/CartContext';
 
 const Navbar = (props) => {
   const [menuOpen, setMenuOpen] = useState(false);
-  // Use navigation from props or fallback to hook
-  const navigation = props.navigation || useNavigation();
+  // Use navigation from props (passed by the header) or fall back to the hook.
+  const hookNavigation = useNavigation();
+  const navigation = props.navigation || hookNavigation;
+  const { count } = useContext(CartContext);
 
   const toggleMenu = () => setMenuOpen(!menuOpen);
+
+  const goAndClose = (route) => {
+    setMenuOpen(false);
+    navigation.navigate(route);
+  };
 
   const handleAllClick = () => {
     setMenuOpen(false);
@@ -33,13 +41,17 @@ const Navbar = (props) => {
           <Text style={styles.brand}>Huastex</Text>
         </TouchableOpacity>
 
-        {/* Dummy Cart Icon */}
+        {/* Cart Icon */}
         <TouchableOpacity onPress={() => navigation.navigate('MyOrders')} style={styles.cartIcon}>
           <Image
             source={require('../../Assets/cart.png')}
             style={styles.shoppingCart}
           />
-          <Text>0</Text>
+          {count > 0 && (
+            <View style={styles.cartBadge}>
+              <Text style={styles.cartBadgeText}>{count}</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -49,20 +61,20 @@ const Navbar = (props) => {
           <TouchableOpacity onPress={handleAllClick}>
             <Text style={styles.menuItem}>Principal</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('Electronics'); }}>
-            <Text style={styles.menuItem}>Ventas</Text>
+          <TouchableOpacity onPress={() => goAndClose('Shop')}>
+            <Text style={styles.menuItem}>Tienda</Text>
           </TouchableOpacity>
-          {/* <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('MyOrders'); }}>
-            <Text style={styles.menuItem}>Productos</Text>
+          <TouchableOpacity onPress={() => goAndClose('Categories')}>
+            <Text style={styles.menuItem}>Categorías</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('User'); }}>
-            <Text style={styles.menuItem}>Usuarios</Text>
-          </TouchableOpacity> */}
-          <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('Contact'); }}>
-            <Text style={styles.menuItem}>Reporte diario</Text>
+          <TouchableOpacity onPress={() => goAndClose('MyOrders')}>
+            <Text style={styles.menuItem}>Carrito</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { toggleMenu(); navigation.navigate('Us'); }}>
-            <Text style={styles.menuItem}>Inventario</Text>
+          <TouchableOpacity onPress={() => goAndClose('User')}>
+            <Text style={styles.menuItem}>Mi Cuenta</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => goAndClose('Us')}>
+            <Text style={styles.menuItem}>Nosotros</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -125,6 +137,23 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     resizeMode: 'contain',
+  },
+  cartBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#1486AC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  cartBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
   },
   menu: {
     marginTop: 10,

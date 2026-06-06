@@ -58,6 +58,11 @@ export default function SignInScreen({ navigation, route }) {
         onPress={() => navigation.navigate('SignUp')}>
         <Text style={styles.buttonText}>Crear cuenta</Text>
       </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.shopButton}
+        onPress={() => navigation.navigate('Shop')}>
+        <Text style={styles.shopButtonText}>Explorar productos</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -78,5 +83,10 @@ const styles = StyleSheet.create({
     backgroundColor:'rgb(116,131,143)', paddingVertical:14,
     borderRadius:4, width:'100%', alignItems:'center', marginTop:8
   },
+  shopButton: {
+    borderColor:'#1486AC', borderWidth:1.5, paddingVertical:14,
+    borderRadius:4, width:'100%', alignItems:'center', marginTop:16
+  },
+  shopButtonText: { color:'#1486AC', fontSize:16, fontWeight:'500' },
   buttonText: { color:'#fff', fontSize:16 }
 });

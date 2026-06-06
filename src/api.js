@@ -3,9 +3,12 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 
+// API host — also used to build absolute product image URLs.
+export const API_BASE = 'https://api.huastex.com';
+
 // create instance
 const api = axios.create({
-  baseURL: 'https://api.huastex.com',
+  baseURL: API_BASE,
 });
 
 // attach token before each request

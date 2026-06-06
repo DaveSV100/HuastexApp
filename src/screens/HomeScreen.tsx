@@ -113,6 +113,10 @@ export default function HomeScreen(): React.JSX.Element {
     <View style={styles.container}>
       <Text style={styles.welcomeText}>Bienvenido, {user?.name}</Text>
 
+      <TouchableOpacity style={styles.shopButton} onPress={() => navigation.navigate('Shop')}>
+        <Text style={styles.shopButtonText}>Ir a la tienda</Text>
+      </TouchableOpacity>
+
       {hasStaffAccess && (
         <View style={styles.buttonsContainer}>
           <Button onPress={() => navigation.navigate('Inventory')} title="Inventario" />
@@ -166,6 +170,18 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 20,
     textAlign: 'center',
+  },
+  shopButton: {
+    backgroundColor: '#1486AC',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  shopButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
   },
   buttonsContainer: {
     width: '100%',

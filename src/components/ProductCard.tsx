@@ -58,6 +58,9 @@ export default function ProductCard({ product, onPress }: Props) {
 const styles = StyleSheet.create({
   card: {
     flex: 1,
+    // Cap at half-width so a lone card on an odd final row keeps the same size
+    // as the others instead of stretching to fill the whole row.
+    maxWidth: '50%',
     backgroundColor: '#fff',
     borderRadius: 8,
     padding: 10,

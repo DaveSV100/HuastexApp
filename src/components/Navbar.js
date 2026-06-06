@@ -3,6 +3,7 @@ import React, { useState, useContext } from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { CartContext } from '../contexts/CartContext';
+import { AuthContext } from '../contexts/AuthContext';
 
 const Navbar = (props) => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -10,6 +11,7 @@ const Navbar = (props) => {
   const hookNavigation = useNavigation();
   const navigation = props.navigation || hookNavigation;
   const { count } = useContext(CartContext);
+  const { user } = useContext(AuthContext);
 
   const toggleMenu = () => setMenuOpen(!menuOpen);
 
@@ -18,10 +20,9 @@ const Navbar = (props) => {
     navigation.navigate(route);
   };
 
-  const handleAllClick = () => {
-    setMenuOpen(false);
-    navigation.navigate('Home');
-  };
+  // "Mi cuenta" opens the dashboard (welcome / pedidos / staff menu) when signed
+  // in, otherwise sends the visitor to the sign-in screen.
+  const accountRoute = user ? 'Home' : 'SignIn';
 
   return (
     <View style={styles.navbar}>
@@ -33,7 +34,7 @@ const Navbar = (props) => {
         </TouchableOpacity>
 
         {/* Logo & Brand */}
-        <TouchableOpacity onPress={() => navigation.navigate('Home')} style={styles.logoBrand}>
+        <TouchableOpacity onPress={() => navigation.navigate('Shop')} style={styles.logoBrand}>
           <Image
             source={require('../../Assets/logo.png')}
             style={styles.logo}
@@ -58,11 +59,9 @@ const Navbar = (props) => {
       {/* Conditionally render menu items */}
       {menuOpen && (
         <View style={styles.menu}>
-          <TouchableOpacity onPress={handleAllClick}>
-            <Text style={styles.menuItem}>Principal</Text>
-          </TouchableOpacity>
+          {/* "Principal" is the storefront */}
           <TouchableOpacity onPress={() => goAndClose('Shop')}>
-            <Text style={styles.menuItem}>Tienda</Text>
+            <Text style={styles.menuItem}>Principal</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => goAndClose('Categories')}>
             <Text style={styles.menuItem}>Categorías</Text>
@@ -70,12 +69,14 @@ const Navbar = (props) => {
           <TouchableOpacity onPress={() => goAndClose('MyOrders')}>
             <Text style={styles.menuItem}>Carrito</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => goAndClose('User')}>
+          <TouchableOpacity onPress={() => goAndClose(accountRoute)}>
             <Text style={styles.menuItem}>Mi Cuenta</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => goAndClose('Us')}>
-            <Text style={styles.menuItem}>Nosotros</Text>
-          </TouchableOpacity>
+          {user && (
+            <TouchableOpacity onPress={() => goAndClose('Us')}>
+              <Text style={styles.menuItem}>Nosotros</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </View>

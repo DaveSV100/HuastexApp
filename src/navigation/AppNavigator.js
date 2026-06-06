@@ -7,8 +7,6 @@ import { AuthContext } from '../contexts/AuthContext';
 import SignInScreen from '../screens/SignIn/SignInScreen';
 import HomeScreen from '../screens/HomeScreen';
 import ReportScreen from '../screens/ReportScreen';
-// import SalesScreen from '../screens/SalesScreen';
-import Sales from '../screens/Sales';
 import SalesScreen from '../screens/Sales/SalesScreen';
 import UserScreen from '../screens/UserScreen/UserScreen';
 import InventoryScreen from '../screens/InventoryScreen';
@@ -24,28 +22,38 @@ import CategoriesScreen from '../screens/shop/CategoriesScreen';
 import CategoryScreen from '../screens/shop/CategoryScreen';
 import ProductDetailScreen from '../screens/shop/ProductDetailScreen';
 import CartScreen from '../screens/shop/CartScreen';
-import ShopHeader from '../components/ShopHeader';
 
 const Stack = createNativeStackNavigator();
 
+// Roles that get the staff dashboard as their landing screen.
+const STAFF_ROLES = ['admin', 'superadmin', 'staff', 'iT'];
+
 export default function AppNavigator() {
   const { user } = useContext(AuthContext);
+  const isStaff = !!user && STAFF_ROLES.includes(user.role);
+
+  // Everyone lands on the store, except staff, who land on their dashboard.
+  const initialRouteName = isStaff ? 'Home' : 'Shop';
 
   return (
-    <>
+    <Stack.Navigator
+      // Remount on sign-in / sign-out so initialRouteName reapplies: staff land
+      // on their dashboard, everyone else on the store.
+      key={user ? 'auth' : 'guest'}
+      initialRouteName={initialRouteName}
+      screenOptions={{ header: (props) => <Navbar {...props} /> }}
+    >
+      {/* Public storefront — available whether signed in or not */}
+      <Stack.Screen name="Shop" component={ShopHomeScreen} />
+      <Stack.Screen name="Categories" component={CategoriesScreen} />
+      <Stack.Screen name="Category" component={CategoryScreen} />
+      <Stack.Screen name="Product" component={ProductDetailScreen} />
+      <Stack.Screen name="MyOrders" component={CartScreen} />
+
       {user ? (
-        // Authenticated flow
-        <Stack.Navigator
-          initialRouteName="Home"
-          screenOptions={{ header: (props) => <Navbar {...props} /> }}
-        >
+        // Signed-in screens
+        <>
           <Stack.Screen name="Home" component={HomeScreen} />
-          {/* E-commerce flow */}
-          <Stack.Screen name="Shop" component={ShopHomeScreen} />
-          <Stack.Screen name="Categories" component={CategoriesScreen} />
-          <Stack.Screen name="Category" component={CategoryScreen} />
-          <Stack.Screen name="Product" component={ProductDetailScreen} />
-          <Stack.Screen name="MyOrders" component={CartScreen} />
           <Stack.Screen name="Dailyreport" component={ReportScreen} />
           <Stack.Screen name="Sales" component={SalesScreen} />
           <Stack.Screen name="Payments" component={PaymentsScreen} />
@@ -53,43 +61,22 @@ export default function AppNavigator() {
           <Stack.Screen name="Inventory" component={InventoryScreen} />
           <Stack.Screen name="Us" component={UsScreen} />
           <Stack.Screen name="Forms" component={FormsScreen} />
-        </Stack.Navigator>
+        </>
       ) : (
-        // Unauthenticated flow — auth screens have no header; the public shop
-        // screens use the lightweight ShopHeader (back + brand + cart).
-        <Stack.Navigator
-          initialRouteName="SignIn"
-          screenOptions={{ headerShown: false }}
-        >
-          <Stack.Screen name="SignIn" component={SignInScreen} />
-          <Stack.Screen name="SignUp" component={SignUpScreen} />
+        // Auth screens render their own layout (no Navbar header)
+        <>
           <Stack.Screen
-            name="Shop"
-            component={ShopHomeScreen}
-            options={{ headerShown: true, header: (props) => <ShopHeader {...props} /> }}
+            name="SignIn"
+            component={SignInScreen}
+            options={{ headerShown: false }}
           />
           <Stack.Screen
-            name="Categories"
-            component={CategoriesScreen}
-            options={{ headerShown: true, header: (props) => <ShopHeader {...props} /> }}
+            name="SignUp"
+            component={SignUpScreen}
+            options={{ headerShown: false }}
           />
-          <Stack.Screen
-            name="Category"
-            component={CategoryScreen}
-            options={{ headerShown: true, header: (props) => <ShopHeader {...props} /> }}
-          />
-          <Stack.Screen
-            name="Product"
-            component={ProductDetailScreen}
-            options={{ headerShown: true, header: (props) => <ShopHeader {...props} /> }}
-          />
-          <Stack.Screen
-            name="MyOrders"
-            component={CartScreen}
-            options={{ headerShown: true, header: (props) => <ShopHeader {...props} /> }}
-          />
-        </Stack.Navigator>
+        </>
       )}
-    </>
+    </Stack.Navigator>
   );
 }

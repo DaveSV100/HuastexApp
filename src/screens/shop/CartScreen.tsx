@@ -41,6 +41,21 @@ export default function CartScreen() {
   const navigation = useNavigation<any>();
   const { items, total, clearCart } = useCart();
 
+  // Closing the browser doesn't tell us whether the payment actually went
+  // through (the web saves the sale only on /success). So ask before emptying
+  // the cart — otherwise closing the page to double-check the cart would wipe
+  // it, leaving a later "Pagar" with nothing to send.
+  const confirmPurchaseAndClear = () => {
+    Alert.alert(
+      '¿Completaste tu compra?',
+      'Si tu pago se realizó con éxito vaciaremos tu carrito. Si aún no pagas, lo conservamos.',
+      [
+        { text: 'Aún no', style: 'cancel' },
+        { text: 'Sí, vaciar carrito', onPress: clearCart },
+      ],
+    );
+  };
+
   const handleCheckout = async () => {
     if (!items.length) return;
     try {
@@ -63,12 +78,11 @@ export default function CartScreen() {
           enableUrlBarHiding: true,
           enableDefaultShare: false,
         });
-        // The browser was dismissed — the web flow handled the charge/save on
-        // /success, so treat the handoff as complete and clear the local cart.
-        clearCart();
+        // Browser dismissed — confirm before clearing.
+        confirmPurchaseAndClear();
       } else {
+        // System browser: no reliable close signal, so leave the cart intact.
         await Linking.openURL(url);
-        clearCart();
       }
     } catch (e) {
       console.error('Checkout error:', e);

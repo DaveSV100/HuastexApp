@@ -78,7 +78,7 @@ export default function PaymentsScreen(): React.JSX.Element {
     }
   };
 
-  const handleDelete = async (paymentId: number) => {
+  const handleDelete = async (payment: Payment) => {
     Alert.alert(
       'Confirmar eliminación',
       '¿Eliminar este abono?',
@@ -89,7 +89,9 @@ export default function PaymentsScreen(): React.JSX.Element {
           style: 'destructive',
           onPress: async () => {
             try {
-              await api.delete(`/payments/${paymentId}`);
+              // Deleting the payment also removes its daily-report row automatically:
+              // transactions.payment_id FK is ON DELETE CASCADE.
+              await api.delete(`/payments/${payment.id}`);
               fetchPayments();
               Alert.alert('Éxito', 'Abono eliminado');
             } catch (err) {
@@ -140,7 +142,7 @@ export default function PaymentsScreen(): React.JSX.Element {
       {canDelete && (
         <TouchableOpacity
           style={styles.deleteButton}
-          onPress={() => handleDelete(item.id)}
+          onPress={() => handleDelete(item)}
         >
           <Text style={styles.deleteButtonText}>Eliminar</Text>
         </TouchableOpacity>

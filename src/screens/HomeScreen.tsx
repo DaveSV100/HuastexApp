@@ -1,12 +1,10 @@
 // @ts-nocheck
 import React, { useContext, useEffect, useState } from 'react';
 import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  Button, 
-  Alert, 
-  FlatList, 
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
   TouchableOpacity, 
   Linking,
   ActivityIndicator 
@@ -16,7 +14,7 @@ import { AuthContext } from '../contexts/AuthContext';
 import api from '../api';
 
 export default function HomeScreen(): React.JSX.Element {
-  const { signOut, user } = useContext(AuthContext);
+  const { user } = useContext(AuthContext);
   const navigation = useNavigation();
   
   const [sales, setSales] = useState([]);
@@ -42,32 +40,6 @@ export default function HomeScreen(): React.JSX.Element {
 
     fetchSales();
   }, [user?.email]);
-
-  const handleDeleteAccount = () => {
-    Alert.alert(
-      'Borrar cuenta',
-      '¿Seguro deseas borrar tu cuenta?',
-      [
-        {
-          text: 'Cancelar',
-          style: 'cancel',
-        },
-        {
-          text: 'Borrar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.delete('/auth/delete-my-account');
-              signOut();
-            } catch (error) {
-              console.error('Error deleting account:', error);
-              Alert.alert('Error', 'No se pudo borrar la cuenta. Intenta de nuevo.');
-            }
-          },
-        },
-      ]
-    );
-  };
 
   const openWebsite = () => {
     Linking.openURL('https://huastex.com');
@@ -113,17 +85,29 @@ export default function HomeScreen(): React.JSX.Element {
     <View style={styles.container}>
       <Text style={styles.welcomeText}>Bienvenido, {user?.name}</Text>
 
-      <TouchableOpacity style={styles.shopButton} onPress={() => navigation.navigate('Shop')}>
-        <Text style={styles.shopButtonText}>Ir a la tienda</Text>
-      </TouchableOpacity>
+      <View style={styles.menuContainer}>
+        <TouchableOpacity style={styles.shopButton} onPress={() => navigation.navigate('Shop')}>
+          <Text style={styles.shopButtonText}>Ir a la tienda</Text>
+        </TouchableOpacity>
 
-      {hasStaffAccess && (
-        <View style={styles.buttonsContainer}>
-          <Button onPress={() => navigation.navigate('Inventory')} title="Inventario" />
-          <Button onPress={() => navigation.navigate('Sales')} title="Ventas" />
-          <Button onPress={() => navigation.navigate('Dailyreport')} title="Reporte Diario" />
-        </View>
-      )}
+        {hasStaffAccess && (
+          <>
+            <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Inventory')}>
+              <Text style={styles.menuButtonText}>Inventario</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Sales')}>
+              <Text style={styles.menuButtonText}>Ventas</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Dailyreport')}>
+              <Text style={styles.menuButtonText}>Reporte Diario</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Perfil')}>
+          <Text style={styles.menuButtonText}>Perfil</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Sales Section */}
       <View style={styles.salesSection}>
@@ -142,19 +126,9 @@ export default function HomeScreen(): React.JSX.Element {
           <View style={styles.noSalesContainer}>
             <Text style={styles.noSalesText}>
               Aún no tienes ningún pedido.{'\n'}
-              Compra en{' '}
-              <Text style={styles.link} onPress={openWebsite}>
-                huastex.com
-              </Text>
-              {' '}y tu pedido aparecerá aquí.
             </Text>
           </View>
         )}
-      </View>
-
-      <View style={styles.accountButtons}>
-        <Button title="Cerrar Sesión" onPress={signOut} />
-        <Button title="Borrar Cuenta" color="red" onPress={handleDeleteAccount} />
       </View>
     </View>
   );
@@ -171,22 +145,32 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     textAlign: 'center',
   },
+  menuContainer: {
+    width: '100%',
+    gap: 10,
+    marginBottom: 20,
+  },
   shopButton: {
     backgroundColor: '#1486AC',
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
-    marginBottom: 20,
   },
   shopButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '500',
   },
-  buttonsContainer: {
-    width: '100%',
-    gap: 10,
-    marginBottom: 20,
+  menuButton: {
+    backgroundColor: '#2196F3',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  menuButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
   },
   salesSection: {
     flex: 1,
@@ -225,7 +209,7 @@ const styles = StyleSheet.create({
   },
   noSalesContainer: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'bottom',
     alignItems: 'center',
     padding: 20,
   },
@@ -239,9 +223,5 @@ const styles = StyleSheet.create({
     color: 'rgb(122,149,172)',
     fontWeight: 'bold',
     textDecorationLine: 'underline',
-  },
-  accountButtons: {
-    width: '100%',
-    gap: 10,
   },
 });

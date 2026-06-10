@@ -59,7 +59,23 @@ export default function CartScreen() {
   const handleCheckout = async () => {
     if (!items.length) return;
     try {
-      const cartBase64 = encodeCart(items);
+      // The web reads the cart from this param. The currently-deployed
+      // /card-payment page maps each item itself from {title, price, id}, but
+      // /sales/add (and newer web builds) expect the line shape
+      // {producto, product_id, inventory_id, unitPrice, quantity, serial_number}.
+      // Send a superset so it works against both: keep the original fields and
+      // add the line-shape ones. Shop items are catalog products, so
+      // product_id is the catalog id and inventory_id is null.
+      const payload = items.map(it => ({
+        ...it,
+        producto: it.title,
+        product_id: it.id,
+        inventory_id: null,
+        unitPrice: parseFloat(it.price || '0'),
+        serial_number: '',
+        totalProductPrice: parseFloat(it.price || '0') * it.quantity,
+      }));
+      const cartBase64 = encodeCart(payload);
       const url = `${WEB_BASE}/card-payment?cart=${encodeURIComponent(
         cartBase64,
       )}`;

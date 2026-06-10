@@ -2,12 +2,20 @@
 import { parseJwt } from '../utils/jwt';
 import React, { createContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '../api';
+import api, { setUnauthorizedHandler } from '../api';
 
 export const AuthContext = createContext({});
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    // When the API layer sees a 401 (token missing/expired/invalid) it has
+    // already cleared storage — here we just drop the user so AppNavigator
+    // re-renders the SignIn stack.
+    setUnauthorizedHandler(() => setUser(null));
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   useEffect(() => {
     // Bootstrap: load token from storage

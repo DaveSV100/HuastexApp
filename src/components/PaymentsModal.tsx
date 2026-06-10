@@ -115,6 +115,9 @@ export default function PaymentsModal({
       transaction_date: paymentData.fecha,
       payment_type: method,
       location: saleData.sucursal || '',
+      // Link this report row back to its sale so the report can deep-link to it
+      // and so deletes can stay in sync between sales and the daily report.
+      sale_id: saleData.id ?? null,
     };
   };
 
@@ -127,35 +130,28 @@ export default function PaymentsModal({
     setIsSaving(true);
 
     try {
-      // Register payment
-      const paymentResponse = await fetch('https://api.huastex.com/payments/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          saleId: sale.id,
-          ...formData,
-        }),
+      // Register payment — via the shared axios instance so the x-auth-token
+      // header (required now that /payments/add is locked) is attached.
+      const paymentResponse = await api.post('/payments/add', {
+        saleId: sale.id,
+        ...formData,
       });
 
-      if (!paymentResponse.ok) {
-        throw new Error('Failed to register payment');
-      }
-
-      const paymentResult = await paymentResponse.json();
+      const paymentResult = paymentResponse.data;
       console.log('✔️ Payment registered:', paymentResult);
 
-      // Register transaction
-      const transactionPayload = buildPaymentPayload(sale, formData);
-      const txRes = await fetch('https://api.huastex.com/transactions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(transactionPayload),
-      });
+      // The id of the payment we just created — used to link its report row so
+      // that deleting the payment cascades to the transaction (FK ON DELETE CASCADE).
+      const newPaymentId =
+        paymentResult?.id ?? paymentResult?.payment?.id ?? paymentResult?.paymentId ?? null;
 
-      if (txRes.ok) {
-        const txResult = await txRes.json();
-        console.log('✔️ Transaction recorded:', txResult);
+      // Register transaction
+      const transactionPayload: any = buildPaymentPayload(sale, formData);
+      if (newPaymentId != null) {
+        transactionPayload.payment_id = newPaymentId;
       }
+      const txRes = await api.post('/transactions', transactionPayload);
+      console.log('✔️ Transaction recorded:', txRes.data);
 
       Alert.alert('Éxito', 'Abono registrado correctamente');
       onPaymentSuccess();

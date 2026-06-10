@@ -1,0 +1,47 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/server/controllers/**)",
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/server/models/**)",
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/server/routes/**)",
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/server/**)",
+      "Bash(echo \"=== EXIT: $? ===\")",
+      "Bash(adb devices *)",
+      "Bash(emulator -list-avds)",
+      "Bash(/Users/davidsaavedravazquez/Library/Android/sdk/emulator/emulator -avd Medium_Phone_API_36.1 -no-snapshot-save > /tmp/emulator.log 2>&1)",
+      "Read(//Users/davidsaavedravazquez/.android/avd/Medium_Phone_API_36.1.avd/**)",
+      "Bash(sysctl -n hw.memsize)",
+      "Bash(awk '{print \"RAM bytes: \"$1\" \\(~\"int\\($1/1024/1024/1024\\)\" GB\\)\"}')",
+      "Bash(sysctl -n hw.ncpu)",
+      "Bash(awk '{print \"CPU cores: \"$1}')",
+      "Bash(CFG=\"$HOME/.android/avd/Medium_Phone.avd/config.ini\"; grep -iE \"hw.ramSize|vm.heapSize|hw.cpu.ncore|hw.gpu\" \"$CFG\"; echo \"=== \\(blank above means key absent / using defaults\\) ===\")",
+      "Read(//Users/davidsaavedravazquez/.android/avd/Medium_Phone.avd/**)",
+      "Bash(adb -s emulator-5554 emu kill)",
+      "Bash(/Users/davidsaavedravazquez/Library/Android/sdk/emulator/emulator -avd Medium_Phone_API_36.1 -no-snapshot -gpu host -no-boot-anim)",
+      "Bash(curl -s localhost:8081/status)",
+      "Bash(adb -s emulator-5554 install -r app/build/outputs/apk/debug/app-debug.apk)",
+      "Bash(adb -s emulator-5554 shell am start -n com.huastexapp/.MainActivity)",
+      "Bash(adb shell *)",
+      "Bash(adb logcat *)",
+      "Bash(curl -s \"localhost:8081/index.bundle?platform=android&dev=true\" -o /tmp/bundle.js -w \"bundle HTTP %{http_code}\\\\n\")",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(xcrun simctl *)",
+      "Bash(~/Library/Android/sdk/emulator/emulator -list-avds)",
+      "Bash(~/Library/Android/sdk/platform-tools/adb devices *)",
+      "Bash(lsof -ti:8081)",
+      "Bash(emulator -avd Medium_Phone_API_36.1 -netdelay none -netspeed full)",
+      "Bash(npm start *)",
+      "Bash(~/Library/Android/sdk/emulator/emulator -avd Medium_Phone_API_36.1 -netdelay none -netspeed full)",
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/client/node_modules/**)",
+      "Bash(npx playwright *)",
+      "Bash(node -e ' *)",
+      "Bash(npm ls *)",
+      "Bash(node -e \"const p=require\\('/Users/davidsaavedravazquez/Documents/HuastexApp/node_modules/react-native-signature-canvas/package.json'\\); console.log\\('peerDeps:', JSON.stringify\\(p.peerDependencies\\)\\)\")"
+    ],
+    "additionalDirectories": [
+      "/tmp",
+      "/Users/davidsaavedravazquez/.android/avd/Medium_Phone.avd"
+    ]
+  }
+}

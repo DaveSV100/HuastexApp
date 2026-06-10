@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/server/controllers/**)",
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/server/models/**)",
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/server/routes/**)",
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/server/**)",
+      "Bash(echo \"=== EXIT: $? ===\")",
+      "Bash(adb devices *)",
+      "Bash(emulator -list-avds)",
+      "Bash(/Users/davidsaavedravazquez/Library/Android/sdk/emulator/emulator -avd Medium_Phone_API_36.1 -no-snapshot-save > /tmp/emulator.log 2>&1)",
+      "Read(//Users/davidsaavedravazquez/.android/avd/Medium_Phone_API_36.1.avd/**)",
+      "Bash(sysctl -n hw.memsize)",
+      "Bash(awk '{print \"RAM bytes: \"$1\" \\(~\"int\\($1/1024/1024/1024\\)\" GB\\)\"}')",
+      "Bash(sysctl -n hw.ncpu)",
+      "Bash(awk '{print \"CPU cores: \"$1}')",
+      "Bash(CFG=\"$HOME/.android/avd/Medium_Phone.avd/config.ini\"; grep -iE \"hw.ramSize|vm.heapSize|hw.cpu.ncore|hw.gpu\" \"$CFG\"; echo \"=== \\(blank above means key absent / using defaults\\) ===\")",
+      "Read(//Users/davidsaavedravazquez/.android/avd/Medium_Phone.avd/**)"
+    ],
+    "additionalDirectories": [
+      "/tmp",
+      "/Users/davidsaavedravazquez/.android/avd/Medium_Phone.avd"
+    ]
+  }
+}

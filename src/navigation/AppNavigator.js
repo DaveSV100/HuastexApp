@@ -13,6 +13,7 @@ import InventoryScreen from '../screens/InventoryScreen';
 import UsScreen from '../screens/UsScreen';
 import FormsScreen from '../screens/FormsScreen';
 import PaymentsScreen from '../screens/PaymentsScreen';
+import PerfilScreen from '../screens/PerfilScreen';
 import SignUpScreen from '../screens/SignUpScreen';
 import Navbar from '../components/Navbar';
 
@@ -54,6 +55,7 @@ export default function AppNavigator() {
         // Signed-in screens
         <>
           <Stack.Screen name="Home" component={HomeScreen} />
+          <Stack.Screen name="Perfil" component={PerfilScreen} />
           <Stack.Screen name="Dailyreport" component={ReportScreen} />
           <Stack.Screen name="Sales" component={SalesScreen} />
           <Stack.Screen name="Payments" component={PaymentsScreen} />

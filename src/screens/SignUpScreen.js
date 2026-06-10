@@ -37,7 +37,9 @@ export default function SignUpScreen({ navigation }) {
     }
 
     try {
-      await api.post('/auth/register', { name, email, password });
+      // Public self-signup → always creates a 'normal' user. /auth/register is
+      // now superadmin-only and must NOT be used here.
+      await api.post('/auth/signup', { name, email, password });
       Alert.alert('Éxito', 'Cuenta creada exitosamente', [
         { text: 'OK', onPress: () => navigation.navigate('SignIn') }
       ]);

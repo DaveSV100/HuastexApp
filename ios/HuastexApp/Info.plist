@@ -35,6 +35,10 @@
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Se necesita acceso para guardar la venta como imagen en tu galería.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Se necesita acceso a tu galería para guardar la venta como imagen.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

@@ -25,6 +25,9 @@ DerivedData
 # Android/IntelliJ
 #
 build/
+# Finder-duplicated build folders ("build 2", "build 3", …) escape the
+# plain build/ rule because of the space in the name.
+build [0-9]/
 .idea
 .gradle
 local.properties

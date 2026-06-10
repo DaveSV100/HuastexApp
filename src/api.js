@@ -11,6 +11,14 @@ const api = axios.create({
   baseURL: API_BASE,
 });
 
+// Logout handler registered by AuthProvider. The axios interceptor lives outside
+// React, so we can't call signOut() directly — the provider hands it to us here
+// and we invoke it when the server reports the token is missing/expired (401).
+let onUnauthorized = null;
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn;
+}
+
 // attach token before each request
 api.interceptors.request.use(
   async config => {
@@ -30,6 +38,25 @@ api.interceptors.request.use(
     return config;
   },
   err => Promise.reject(err)
+);
+
+// Handle auth failures from the server. Now that the backend locks routes behind
+// `x-auth-token`, a missing/expired/invalid token comes back as 401 — clear the
+// stored session and bounce the user to the sign-in screen via the registered
+// handler. (403 means authenticated-but-wrong-role; we surface that as-is.)
+api.interceptors.response.use(
+  res => res,
+  async err => {
+    if (err.response?.status === 401) {
+      await AsyncStorage.multiRemove(['token','token_exp','role','branch','userEmail']);
+      if (onUnauthorized) {
+        onUnauthorized();
+      } else {
+        Alert.alert('Sesión expirada','Por favor inicia sesión de nuevo.');
+      }
+    }
+    return Promise.reject(err);
+  }
 );
 
 export default api;

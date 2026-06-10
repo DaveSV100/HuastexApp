@@ -1,5 +1,5 @@
 // src/screens/ReportScreen.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,8 +16,9 @@ import {
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api'; // adjust path if needed
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 
 const paymentTypeLabels: Record<string, string> = {
   deposit: 'Abono',
@@ -39,12 +40,34 @@ function getLocalDateString(date: Date = new Date()) {
 export default function ReportScreen() {
   const navigation = useNavigation();
 
-  const userRole = 'admin';
-  const userBranch = 'aquismon';
+  // Real role/branch from the signed-in session (set at login from the JWT).
+  // Previously hardcoded to 'admin'/'aquismon', which faked the UI gating.
+  const [role, setRole] = useState<string | null>(null);
+  const [userBranch, setUserBranch] = useState('');
 
-  const [selectedLocation, setSelectedLocation] = useState(
-    userRole === 'staff' || userRole === 'iT' ? userBranch : 'aquismon'
-  );
+  // Back-office roles may create/edit/delete report rows. `normal` cannot — and
+  // the server now enforces this (DELETE /transactions, /sales and /payments all
+  // allow admin|superadmin|staff|iT), so this just keeps the UI in sync.
+  const canManage =
+    role === 'admin' || role === 'superadmin' || role === 'staff' || role === 'iT';
+
+  const [selectedLocation, setSelectedLocation] = useState('aquismon');
+
+  useEffect(() => {
+    (async () => {
+      const storedRole = await AsyncStorage.getItem('role');
+      const storedBranch = (await AsyncStorage.getItem('branch')) || '';
+      // Branch is stored as a display name (e.g. "Cerro Azul"); the picker uses
+      // slug values ("cerroazul"), so normalize before comparing/selecting.
+      const branchSlug = storedBranch.toLowerCase().replace(/\s+/g, '');
+      setRole(storedRole);
+      setUserBranch(branchSlug);
+      // staff / iT are pinned to their own branch's report.
+      if (storedRole === 'staff' || storedRole === 'iT') {
+        setSelectedLocation(branchSlug || 'aquismon');
+      }
+    })();
+  }, []);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
 
@@ -71,10 +94,15 @@ export default function ReportScreen() {
   const [showAccModal, setShowAccModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchTransactions();
-    fetchDailyAccounting();
-  }, [selectedLocation, selectedDate]);
+  // Refetch whenever the screen regains focus (so deletes/edits made on the
+  // Sales or Payments screens show up here immediately) and whenever the
+  // branch/date filter changes.
+  useFocusEffect(
+    useCallback(() => {
+      fetchTransactions();
+      fetchDailyAccounting();
+    }, [selectedLocation, selectedDate])
+  );
 
   async function fetchTransactions() {
     try {
@@ -152,13 +180,56 @@ export default function ReportScreen() {
     setShowTxModal(true);
   }
 
-  async function deleteTx(id: number) {
+  // Is this transaction the sale's own income row (created when the sale was made)?
+  function isSaleRow(tx: any) {
+    const ptype = (tx?.payment_type || '').toLowerCase();
+    return !!tx?.sale_id && (ptype === 'sale' || ptype === 'down_payment');
+  }
+
+  // Is this an abono (payment) row linked to a sale?
+  function isLinkedPaymentRow(tx: any) {
+    return !!tx?.sale_id && tx?.transaction_type === 'income' && !isSaleRow(tx);
+  }
+
+  // "Ver más" / info: jump to the related sale or payment detail.
+  function openLinked(tx: any) {
+    if (isSaleRow(tx)) {
+      (navigation as any).navigate('Sales', { focusSaleId: tx.sale_id });
+    } else if (isLinkedPaymentRow(tx)) {
+      (navigation as any).navigate('Payments', { saleId: tx.sale_id });
+    }
+  }
+
+  async function deleteTx(tx: any) {
     Alert.alert('Confirmar', '¿Eliminar transacción?', [
       { text: 'Cancelar', style: 'cancel' },
       {
         text: 'OK', onPress: async () => {
-          await api.delete(`/transactions/${id}`);
-          fetchTransactions();
+          try {
+            if (isSaleRow(tx)) {
+              // Single call. Deleting the sale cascades to its payments,
+              // sale_products and ALL of its daily-report transactions — do NOT
+              // delete transactions separately here.
+              await api.delete(`/sales/${tx.sale_id}`);
+            } else if (isLinkedPaymentRow(tx)) {
+              if (tx.payment_id != null) {
+                // Delete the abono itself; the DB cascade (payment_id FK) removes
+                // this report row automatically.
+                await api.delete(`/payments/${tx.payment_id}`);
+              } else {
+                // Legacy row created before payment_id existed: just remove the
+                // report row (we can't safely identify which payment it was).
+                await api.delete(`/transactions/${tx.id}`);
+              }
+            } else {
+              // Independent income or outcome: only lives in the daily report.
+              await api.delete(`/transactions/${tx.id}`);
+            }
+            fetchTransactions();
+          } catch (e) {
+            console.error(e);
+            Alert.alert('Error', 'No se pudo eliminar');
+          }
         }
       }
     ]);
@@ -167,10 +238,15 @@ export default function ReportScreen() {
   async function saveTransaction() {
     setSaving(true);
     try {
-      const payload = {
+      const payload: any = {
         ...formData,
         transaction_type: txType,
       };
+      // Keep the link to the sale when editing a linked row, so an edit doesn't
+      // orphan it from its sale/payment.
+      if (editingTx?.sale_id != null) {
+        payload.sale_id = editingTx.sale_id;
+      }
       if (editingTx) {
         await api.put(`/transactions/${editingTx.id}`, payload);
       } else {
@@ -211,9 +287,15 @@ export default function ReportScreen() {
           <Picker
             selectedValue={selectedLocation}
             onValueChange={v => setSelectedLocation(v)}
+            enabled={role === 'admin' || role === 'superadmin'}
             style={styles.picker}
           >
-            {['all', 'aquismon', 'cerroazul', 'tepetzintla', 'tlacolula'].map(loc => (
+            {/* admin/superadmin can inspect any branch; staff/iT are limited to
+                their own. */}
+            {(role === 'staff' || role === 'iT'
+              ? [userBranch || 'aquismon']
+              : ['all', 'aquismon', 'cerroazul', 'tepetzintla', 'tlacolula']
+            ).map(loc => (
               <Picker.Item key={loc} label={loc} value={loc} />
             ))}
           </Picker>
@@ -263,24 +345,36 @@ export default function ReportScreen() {
       <FlatList
         data={filteredTx}
         keyExtractor={(t) => (t?.id != null ? String(t.id) : Math.random().toString())}
-        renderItem={({ item }) => (
-          <View style={styles.txItem}>
-            <Text>
-              {item.transaction_type === 'income' ? 'Ingreso' : 'Egreso'}: ${item.value} – {item.name}
-            </Text>
-            {item.transaction_type === 'income' && (
-              <>
-                <Text>Producto: {item.product}</Text>
-                <Text>Tipo: {paymentTypeLabels[item.payment_type]}</Text>
-                <Text>Sucursal: {item.location}</Text>
-              </>
-            )}
-            <View style={styles.txActions}>
-              <Button title="Editar" onPress={() => startEdit(item)} />
-              <Button title="Eliminar" onPress={() => deleteTx(item.id)} />
+        renderItem={({ item }) => {
+          const linkedToSale = isSaleRow(item) || isLinkedPaymentRow(item);
+          return (
+            <View style={styles.txItem}>
+              <Text>
+                {item.transaction_type === 'income' ? 'Ingreso' : 'Egreso'}: ${item.value} – {item.name}
+              </Text>
+              {item.transaction_type === 'income' && (
+                <>
+                  <Text>Producto: {item.product}</Text>
+                  <Text>Tipo: {paymentTypeLabels[item.payment_type]}</Text>
+                  <Text>Sucursal: {item.location}</Text>
+                </>
+              )}
+              {linkedToSale && (
+                <TouchableOpacity onPress={() => openLinked(item)}>
+                  <Text style={styles.linkText}>
+                    ⓘ {isSaleRow(item) ? 'Venta' : 'Abono'} #{item.sale_id} · Ver más
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {canManage && (
+                <View style={styles.txActions}>
+                  <Button title="Editar" onPress={() => startEdit(item)} />
+                  <Button title="Eliminar" onPress={() => deleteTx(item)} />
+                </View>
+              )}
             </View>
-          </View>
-        )}
+          );
+        }}
         ListHeaderComponent={<ListHeader />}
         contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
         // optional: small optimization
@@ -414,6 +508,7 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 8 },
   txItem: { padding: 12, backgroundColor: '#f5f5f5', marginBottom: 8, borderRadius: 4 },
   txActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  linkText: { color: '#007bff', fontWeight: '600', marginTop: 6 },
   modalOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center', alignItems: 'center'

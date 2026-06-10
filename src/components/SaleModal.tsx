@@ -16,7 +16,7 @@ import { Picker } from '@react-native-picker/picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SignatureScreen from 'react-native-signature-canvas';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { buildIncomePayload } from '../utils/incoms';
+import { buildIncomePayload } from '../utils/Incoms';
 import api from '../api';
 
 interface Product {
@@ -131,9 +131,9 @@ export default function SaleModal({
 
   const fetchInventory = async () => {
     try {
-      const response = await fetch('https://api.huastex.com/inventory');
-      const data = await response.json();
-      setAvailableInventory(data);
+      // /inventory is locked — go through the axios instance so x-auth-token is sent.
+      const response = await api.get('/inventory');
+      setAvailableInventory(response.data);
     } catch (error) {
       console.error('Error fetching inventory:', error);
     }
@@ -478,51 +478,50 @@ export default function SaleModal({
       saldoPrecioNormal: formData.saldoPrecioNormal,
     };
 
-    const endpoint = isEditing
-      ? `https://api.huastex.com/sales/${initialData.id}`
-      : 'https://api.huastex.com/sales/add';
-    const verb = isEditing ? 'PUT' : 'POST';
-
+    // Edits (PUT /sales/:id) are locked and need x-auth-token; creates
+    // (POST /sales/add) are the public online-checkout route. Both go through
+    // `api` so the token is attached when present — the public create endpoint
+    // simply ignores it. axios rejects on a non-2xx status, so a real server
+    // rejection lands in the catch below rather than being silently ignored.
     try {
-      const saleRes = await fetch(endpoint, {
-        method: verb,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(dataToSubmit),
-      });
+      const saleRes = isEditing
+        ? await api.put(`/sales/${initialData.id}`, dataToSubmit)
+        : await api.post('/sales/add', dataToSubmit);
 
-      if (!saleRes.ok) {
-        const text = await saleRes.text().catch(() => '');
-        throw new Error(`Server ${verb} failed: ${saleRes.status} ${text}`);
-      }
-
-      const saved = await saleRes.json();
+      // The sale already succeeded above, so an empty body must NOT bubble up as
+      // a "sale failed" error — default to {}.
+      const saved: any = saleRes.data || {};
+      const saleId = saved?.id ?? (isEditing ? initialData?.id : null);
       console.log('✔️ Sale saved:', saved);
 
-      const fullSale = { ...dataToSubmit, id: saved.id };
-      const incomePayload = buildIncomePayload(fullSale);
-      incomePayload.sale_id = saved.id;
+      // Best-effort: mirror the sale into the daily report (transactions table).
+      // A transaction problem must never look like a failed sale.
+      if (saleId != null) {
+        const fullSale = { ...dataToSubmit, id: saleId };
+        const incomePayload: any = buildIncomePayload(fullSale);
+        incomePayload.sale_id = saleId;
 
-      if (!isEditing) {
         try {
-          const txRes = await api.post('/transactions', incomePayload);
-          console.log('✔️ Income recorded:', txRes.data);
-        } catch (err: any) {
-          console.error('❌ Failed to create income for new sale:', err.response?.data || err.message);
-        }
-      } else {
-        try {
-          const txRes = await api.get('/transactions', { params: { sale_id: saved.id } });
-          const existingTx = Array.isArray(txRes.data) && txRes.data.length ? txRes.data[0] : null;
-
-          if (existingTx) {
-            await api.put(`/transactions/${existingTx.id}`, incomePayload);
-            console.log(`✔️ Updated transaction ${existingTx.id}`);
+          if (!isEditing) {
+            await api.post('/transactions', incomePayload);
+            console.log('✔️ Income recorded for new sale');
           } else {
-            const created = await api.post('/transactions', incomePayload);
-            console.log('✔️ Transaction created for edited sale:', created.data);
+            const txRes = await api.get('/transactions', { params: { sale_id: saleId } });
+            const existingTx =
+              Array.isArray(txRes.data) && txRes.data.length ? txRes.data[0] : null;
+            if (existingTx) {
+              await api.put(`/transactions/${existingTx.id}`, incomePayload);
+              console.log(`✔️ Updated transaction ${existingTx.id}`);
+            } else {
+              await api.post('/transactions', incomePayload);
+              console.log('✔️ Transaction created for edited sale');
+            }
           }
         } catch (err: any) {
-          console.error('❌ Failed to find/update/create transaction on edit:', err.response?.data || err.message);
+          console.error(
+            '❌ Transaction sync failed (sale still saved):',
+            err.response?.data || err.message
+          );
         }
       }
 
@@ -563,7 +562,7 @@ export default function SaleModal({
     .m-signature-pad--body {
       border: 1px solid #e8e8e8;
       width: 100%;
-      height: 300px;
+      height: 100%;
     }
   `;
 
@@ -579,11 +578,15 @@ export default function SaleModal({
               <Text style={styles.signatureHeaderButtonText}>Limpiar</Text>
             </TouchableOpacity>
           </View>
-          <SignatureScreen
-            ref={signatureRef}
-            onOK={handleSignatureEnd}
-            webStyle={webStyle}
-          />
+          <View style={styles.signatureCanvasWrap}>
+            <View style={styles.signatureCanvas}>
+              <SignatureScreen
+                ref={signatureRef}
+                onOK={handleSignatureEnd}
+                webStyle={webStyle}
+              />
+            </View>
+          </View>
           <TouchableOpacity
             style={styles.signatureSaveButton}
             onPress={() => {
@@ -1179,6 +1182,18 @@ const styles = StyleSheet.create({
     color: '#007bff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  signatureCanvasWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  signatureCanvas: {
+    height: 320,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   signatureSaveButton: {
     backgroundColor: '#28a745',

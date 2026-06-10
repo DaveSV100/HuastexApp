@@ -1,5 +1,5 @@
 // src/screens/Sales/SalesScreen.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,12 +10,18 @@ import {
   FlatList,
   Alert,
   ActivityIndicator,
+  Modal,
+  ScrollView,
+  Platform,
+  PermissionsAndroid,
 } from 'react-native';
+import ViewShot from 'react-native-view-shot';
+import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 import api from '../../api';
 import SaleModal from '../../components/SaleModal';
 import PaymentsModal from '../../components/PaymentsModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useNavigation, CommonActions } from '@react-navigation/native';
+import { useNavigation, CommonActions, useFocusEffect, useRoute } from '@react-navigation/native';
 
 interface Sale {
   id: number;
@@ -51,6 +57,7 @@ interface SaleModalProps {
 
 export default function SalesScreen(): React.JSX.Element {
   const navigation = useNavigation();
+  const route = useRoute<any>();
   const [isSaleModalOpen, setIsSaleModalOpen] = useState(false);
   const [isPaymentsModalOpen, setIsPaymentsModalOpen] = useState(false);
   const [selectedSaleForPayment, setSelectedSaleForPayment] = useState<Sale | null>(null);
@@ -59,6 +66,10 @@ export default function SalesScreen(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [role, setRole] = useState<string | null>(null);
+  // Sale shown in the "download as image" preview modal (null = closed).
+  const [downloadSale, setDownloadSale] = useState<Sale | null>(null);
+  const [isSavingImage, setIsSavingImage] = useState(false);
+  const receiptRef = useRef<any>(null);
 
 const BackImg = require('../../../Assets/back.png'); 
 
@@ -68,9 +79,24 @@ const BackImg = require('../../../Assets/back.png');
   };
 
   useEffect(() => {
-    fetchSales();
     loadRole();
   }, []);
+
+  // Refetch every time the screen regains focus (after create/edit/delete, or
+  // when returning from Payments / Daily report) so the list is always fresh.
+  useFocusEffect(
+    useCallback(() => {
+      fetchSales();
+    }, [])
+  );
+
+  // Deep link from the daily report: pre-filter to the sale we were sent to.
+  useEffect(() => {
+    const focusId = route.params?.focusSaleId;
+    if (focusId != null) {
+      setSearchQuery(String(focusId).toLowerCase());
+    }
+  }, [route.params]);
 
   const fetchSales = async () => {
     setIsLoading(true);
@@ -116,6 +142,9 @@ const BackImg = require('../../../Assets/back.png');
           style: 'destructive',
           onPress: async () => {
             try {
+              // Single call. The DB cascades remove this sale's payments,
+              // sale_products and daily-report transactions automatically — do
+              // NOT delete transactions separately here.
               await api.delete(`/sales/${saleId}`);
               fetchSales();
               Alert.alert('Éxito', 'Venta eliminada');
@@ -146,6 +175,33 @@ const BackImg = require('../../../Assets/back.png');
 
   const handleSearchChange = (text: string) => {
     setSearchQuery(text.toLowerCase());
+  };
+
+  const handleSaveSaleImage = async () => {
+    if (!receiptRef.current) return;
+    setIsSavingImage(true);
+    try {
+      // Android 9 and below still need the legacy storage permission;
+      // Android 10+ saves through MediaStore without asking.
+      if (Platform.OS === 'android' && Number(Platform.Version) < 29) {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert('Permiso denegado', 'No se puede guardar la imagen sin permiso de almacenamiento.');
+          return;
+        }
+      }
+      const uri = await receiptRef.current.capture();
+      await CameraRoll.saveAsset(uri, { type: 'photo' });
+      Alert.alert('Éxito', 'La venta se guardó como imagen en tu galería.');
+      setDownloadSale(null);
+    } catch (err) {
+      console.error('Error saving sale image:', err);
+      Alert.alert('Error', 'No se pudo guardar la imagen.');
+    } finally {
+      setIsSavingImage(false);
+    }
   };
 
   const filteredSales = sales.filter((sale) => {
@@ -337,6 +393,15 @@ const BackImg = require('../../../Assets/back.png');
             </TouchableOpacity>
           </View>
         )}
+
+        {Boolean(sale.firmadigital) && (
+          <TouchableOpacity
+            style={styles.downloadButton}
+            onPress={() => setDownloadSale(sale)}
+          >
+            <Text style={styles.buttonText}>Descargar Imagen</Text>
+          </TouchableOpacity>
+        )}
       </View>
       </>
     );
@@ -403,6 +468,140 @@ const BackImg = require('../../../Assets/back.png');
           onClose={handleClosePaymentsModal}
           onPaymentSuccess={handlePaymentSuccess}
         />
+      )}
+
+      {downloadSale && (
+        <Modal
+          visible
+          animationType="slide"
+          onRequestClose={() => setDownloadSale(null)}
+        >
+          <View style={styles.receiptContainer}>
+            <View style={styles.receiptHeader}>
+              <Text style={styles.receiptHeaderTitle}>Venta #{downloadSale.id}</Text>
+              <TouchableOpacity onPress={() => setDownloadSale(null)}>
+                <Text style={styles.receiptCloseButton}>Cerrar</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView>
+              {/* Everything inside ViewShot is what ends up in the saved image. */}
+              <ViewShot
+                ref={receiptRef}
+                options={{ format: 'png', quality: 1 }}
+                style={styles.receipt}
+              >
+                <Text style={styles.receiptBrand}>Huastex</Text>
+                <Text style={styles.receiptTitle}>
+                  Comprobante de Venta #{downloadSale.id}
+                </Text>
+
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Cliente: </Text>
+                  {downloadSale.nombre}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Email: </Text>
+                  {downloadSale.email}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Teléfono: </Text>
+                  {downloadSale.phone}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Dirección: </Text>
+                  {downloadSale.calleynumero}, {downloadSale.ciudad}, {downloadSale.estado}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Fecha de compra: </Text>
+                  {formatDate(downloadSale.fecha)}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Sucursal: </Text>
+                  {downloadSale.sucursal}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Forma de pago: </Text>
+                  {downloadSale.formadepago}
+                </Text>
+
+                <Text style={styles.receiptSection}>Productos</Text>
+                {(downloadSale.products || [])
+                  .filter((p) => p)
+                  .map((product, index) => (
+                    <View key={product.id || `product-${index}`} style={styles.productDetail}>
+                      <Text style={styles.receiptText}>
+                        {product.title || product.producto || 'Sin nombre'}
+                        {product.serial_number ? ` (#Serie: ${product.serial_number})` : ''}
+                      </Text>
+                      <Text style={styles.receiptText}>
+                        Cantidad: {product.quantity} — Precio unitario: ${product.unit_price}
+                      </Text>
+                    </View>
+                  ))}
+
+                <Text style={styles.receiptSection}>Importes</Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Precio Normal: </Text>
+                  ${downloadSale.precionormal}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Precio Promoción: </Text>
+                  ${downloadSale.preciopromocion}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Enganche: </Text>
+                  ${downloadSale.enganche}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Saldo Precio Promoción: </Text>
+                  ${downloadSale.saldo_precio_promocion}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Saldo Precio Normal: </Text>
+                  ${downloadSale.saldo_precio_normal}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Plazo: </Text>
+                  {formatPlazo(downloadSale.plazo)}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Fecha de vencimiento: </Text>
+                  {formatDate(downloadSale.fechavencimiento)}
+                </Text>
+                <Text style={styles.receiptText}>
+                  <Text style={styles.detailLabel}>Agente de ventas: </Text>
+                  {downloadSale.agentedeventas}
+                </Text>
+                {Boolean(downloadSale.aclaraciones) && (
+                  <Text style={styles.receiptText}>
+                    <Text style={styles.detailLabel}>Aclaraciones: </Text>
+                    {downloadSale.aclaraciones}
+                  </Text>
+                )}
+
+                <Text style={styles.receiptSection}>Firma del cliente</Text>
+                <Image
+                  source={{ uri: downloadSale.firmadigital }}
+                  style={styles.receiptSignature}
+                  resizeMode="contain"
+                />
+              </ViewShot>
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.receiptSaveButton, isSavingImage && styles.receiptSaveButtonDisabled]}
+              onPress={handleSaveSaleImage}
+              disabled={isSavingImage}
+            >
+              {isSavingImage ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.receiptSaveButtonText}>Guardar en galería</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </Modal>
       )}
     </View>
   );
@@ -543,6 +742,89 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     fontSize: 14,
+  },
+  downloadButton: {
+    backgroundColor: '#6f42c1',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  receiptContainer: {
+    flex: 1,
+    backgroundColor: '#f3f6fb',
+  },
+  receiptHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    paddingTop: 50,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+    backgroundColor: '#fff',
+  },
+  receiptHeaderTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  receiptCloseButton: {
+    color: '#dc3545',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  receipt: {
+    backgroundColor: '#fff',
+    margin: 16,
+    padding: 20,
+    borderRadius: 8,
+  },
+  receiptBrand: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    color: '#007bff',
+  },
+  receiptTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 16,
+    color: '#333',
+  },
+  receiptSection: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    marginTop: 14,
+    marginBottom: 6,
+    color: '#007bff',
+  },
+  receiptText: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 4,
+  },
+  receiptSignature: {
+    height: 140,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    backgroundColor: '#fff',
+  },
+  receiptSaveButton: {
+    backgroundColor: '#28a745',
+    padding: 16,
+    margin: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  receiptSaveButtonDisabled: {
+    backgroundColor: '#6c757d',
+  },
+  receiptSaveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   loader: {
     marginTop: 50,

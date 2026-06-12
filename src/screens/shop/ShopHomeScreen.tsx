@@ -6,6 +6,7 @@ import { useNavigation } from '@react-navigation/native';
 import api from '../../api';
 import { Product } from '../../types';
 import ProductGrid from '../../components/ProductGrid';
+import ShopAssistant from '../../components/ShopAssistant';
 import { colors } from '../../utils/colors';
 
 export default function ShopHomeScreen() {
@@ -69,6 +70,7 @@ export default function ShopHomeScreen() {
           </View>
         }
       />
+      <ShopAssistant />
     </View>
   );
 }

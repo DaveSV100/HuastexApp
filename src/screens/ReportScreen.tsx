@@ -13,6 +13,7 @@ import {
   Alert,
   ScrollView,
   SafeAreaView,
+  Platform,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
@@ -28,6 +29,7 @@ const paymentTypeLabels: Record<string, string> = {
   credit_card: 'C/Tarjeta',
   transfer: 'Transferencia',
   online: 'Online',
+  cash_deposit: 'Depósito en efectivo',
 };
 
 function getLocalDateString(date: Date = new Date()) {
@@ -135,13 +137,20 @@ export default function ReportScreen() {
     return d === getLocalDateString(selectedDate);
   });
 
-  const excluded = ['credit_card', 'transfer', 'online'];
+  // Same math as the web's Incoms page: the cash totals exclude card/
+  // transfer/online/cash-deposit rows; "Total neto" counts every income
+  // regardless of payment type, minus the same egresos.
+  const excluded = ['credit_card', 'transfer', 'online', 'cash_deposit'];
   const txForTotals = filteredTx.filter(t => !excluded.includes(t.payment_type));
   const incomes = txForTotals.filter(t => t.transaction_type === 'income');
   const outcomes = txForTotals.filter(t => t.transaction_type === 'outcome');
   const totalIn = incomes.reduce((sum, t) => sum + Number(t.value || 0), 0);
   const totalOut = outcomes.reduce((sum, t) => sum + Number(t.value || 0), 0);
-  const netTotal = totalIn - totalOut;
+  const totalGeneral = totalIn - totalOut;
+  const netTotalIncomes = filteredTx
+    .filter(t => t.transaction_type === 'income')
+    .reduce((sum, t) => sum + Number(t.value || 0), 0);
+  const netTotal = netTotalIncomes - totalOut;
 
   function onChangeDate(_: any, date?: Date) {
     setShowDatePicker(false);
@@ -282,25 +291,33 @@ export default function ReportScreen() {
       </TouchableOpacity>
 
       <View style={styles.filters}>
-        <View>
+        <View style={styles.filterCol}>
           <Text style={styles.label}>Sucursal:</Text>
-          <Picker
-            selectedValue={selectedLocation}
-            onValueChange={v => setSelectedLocation(v)}
-            enabled={role === 'admin' || role === 'superadmin'}
-            style={styles.picker}
-          >
-            {/* admin/superadmin can inspect any branch; staff/iT are limited to
-                their own. */}
-            {(role === 'staff' || role === 'iT'
-              ? [userBranch || 'aquismon']
-              : ['all', 'aquismon', 'cerroazul', 'tepetzintla', 'tlacolula']
-            ).map(loc => (
-              <Picker.Item key={loc} label={loc} value={loc} />
-            ))}
-          </Picker>
+          <View style={styles.pickerBox}>
+            <Picker
+              selectedValue={selectedLocation}
+              onValueChange={v => setSelectedLocation(v)}
+              enabled={role === 'admin' || role === 'superadmin'}
+              style={styles.picker}
+              itemStyle={styles.pickerItem}
+              mode="dropdown"
+              dropdownIconColor="#333"
+            >
+              {/* admin/superadmin can inspect any branch; staff/iT are limited to
+                  their own. */}
+              {(role === 'staff' || role === 'iT'
+                ? [userBranch || 'aquismon']
+                : ['all', 'aquismon', 'cerroazul', 'tepetzintla', 'tlacolula']
+              ).map(loc => (
+                <Picker.Item key={loc} label={loc} value={loc} color="#000" />
+              ))}
+            </Picker>
+          </View>
+          <View style={styles.editAccountingBtn}>
+            <Button title="Editar Contabilidad" onPress={() => setShowAccModal(true)} />
+          </View>
         </View>
-        <View>
+        <View style={styles.filterCol}>
           <Text style={styles.label}>Fecha:</Text>
           <TouchableOpacity onPress={() => setShowDatePicker(true)} style={styles.dateBtn}>
             <Text>{getLocalDateString(selectedDate)}</Text>
@@ -313,20 +330,19 @@ export default function ReportScreen() {
               onChange={onChangeDate}
             />
           )}
+          <View style={styles.totals}>
+            <Text>Total Ingresos: ${totalIn}</Text>
+            <Text>Total Egresos: ${totalOut}</Text>
+            <Text style={styles.net}>Total General: ${totalGeneral}</Text>
+            <Text>Total neto: ${netTotal}</Text>
+          </View>
         </View>
-      </View>
-
-      <View style={styles.totals}>
-        <Text>Total Ingresos: ${totalIn}</Text>
-        <Text>Total Egresos: ${totalOut}</Text>
-        <Text style={styles.net}>Total Neto: ${netTotal}</Text>
       </View>
 
       <View style={styles.accounting}>
         <Text>Cantidad Contada: {dailyAccounting.counted_amount || '-'}</Text>
         <Text>Dinero en Caja: {dailyAccounting.cash_in_register || '-'}</Text>
         <Text>Cajero: {dailyAccounting.cashier_name || '-'}</Text>
-        <Button title="Editar Contabilidad" onPress={() => setShowAccModal(true)} />
       </View>
 
       <View style={styles.actions}>
@@ -498,12 +514,30 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   back: { width: 32, height: 32, marginBottom: 16 },
   filters: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  filterCol: { flex: 1 },
   label: { marginBottom: 4 },
-  picker: { width: 150, height: 44, borderWidth: 1, borderColor: '#ccc' },
+  // The border lives on the wrapper: styling the Picker itself clips the
+  // native widget. iOS renders a ~120pt wheel; Android's spinner needs at
+  // least ~52pt of height or the selected branch name gets cut off.
+  pickerBox: {
+    width: '100%',
+    maxWidth: 200,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 4,
+    justifyContent: 'center',
+  },
+  picker: {
+    width: '100%',
+    height: Platform.OS === 'ios' ? 120 : 52,
+    color: '#000',
+  },
+  pickerItem: { fontSize: 16, height: 120 },
   dateBtn: { padding: 8, borderWidth: 1, borderColor: '#ccc', borderRadius: 4 },
-  totals: { marginBottom: 16, marginLeft: 200 },
+  totals: { marginTop: 8 },
   net: { fontWeight: 'bold', fontSize: 16 },
-  accounting: { marginBottom: 30, marginLeft: 200 },
+  editAccountingBtn: { marginTop: 8, alignSelf: 'flex-start' },
+  accounting: { marginBottom: 16 },
   actions: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 16 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 8 },
   txItem: { padding: 12, backgroundColor: '#f5f5f5', marginBottom: 8, borderRadius: 4 },

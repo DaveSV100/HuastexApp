@@ -20,6 +20,7 @@ import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 import api from '../../api';
 import SaleModal from '../../components/SaleModal';
 import PaymentsModal from '../../components/PaymentsModal';
+import PrintTicketModal from '../../components/PrintTicketModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, CommonActions, useFocusEffect, useRoute } from '@react-navigation/native';
 
@@ -48,12 +49,18 @@ interface Sale {
   firmadigital?: string;
 }
 
-interface SaleModalProps {
-  visible: boolean;
-  onClose: () => void;
-  onSaved: (data: any) => void;
-  initialData: any | null;
-}
+// Lowercase and strip accents so the search matches regardless of tildes:
+// "Pérez" is found typing "perez" and "Maria" is found typing "maría".
+const normalizeSearchText = (s: string) => {
+  try {
+    return s
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+  } catch {
+    return s.toLowerCase();
+  }
+};
 
 export default function SalesScreen(): React.JSX.Element {
   const navigation = useNavigation();
@@ -70,8 +77,13 @@ export default function SalesScreen(): React.JSX.Element {
   const [downloadSale, setDownloadSale] = useState<Sale | null>(null);
   const [isSavingImage, setIsSavingImage] = useState(false);
   const receiptRef = useRef<any>(null);
+  // Sale shown in the thermal-print preview modal (null = closed).
+  const [printSale, setPrintSale] = useState<Sale | null>(null);
+  // Sale opened in the ticket preview with the PDF share auto-triggered.
+  const [pdfSale, setPdfSale] = useState<Sale | null>(null);
 
-const BackImg = require('../../../Assets/back.png'); 
+const BackImg = require('../../../Assets/back.png');
+const LogoImg = require('../../../Assets/logo.png');
 
   const loadRole = async () => {
     const userRole = await AsyncStorage.getItem('role');
@@ -204,13 +216,15 @@ const BackImg = require('../../../Assets/back.png');
     }
   };
 
+  // Both sides are accent-stripped so "Pérez" matches "perez" and vice versa.
+  const normalizedQuery = normalizeSearchText(searchQuery);
   const filteredSales = sales.filter((sale) => {
     if (!sale) return false;
-    const matchesId = sale.id.toString().includes(searchQuery);
-    const matchesName = sale.nombre?.toLowerCase().includes(searchQuery);
+    const matchesId = sale.id.toString().includes(normalizedQuery);
+    const matchesName = normalizeSearchText(sale.nombre || '').includes(normalizedQuery);
     const matchesProduct = sale.products?.some(
       (product) =>
-        product?.title && product.title.toLowerCase().includes(searchQuery)
+        product?.title && normalizeSearchText(product.title).includes(normalizedQuery)
     );
     return matchesId || matchesName || matchesProduct;
   });
@@ -232,14 +246,27 @@ const BackImg = require('../../../Assets/back.png');
   };
 
   const formatPlazo = (plazo: any) => {
-    if (!plazo || !plazo.value || !plazo.unit) return '';
+    // The DB stores plazo in several shapes: an object, a JSON string, or an
+    // object whose .value is itself a JSON string (the web's SalesGrid
+    // deep-parses these layers BEFORE validating — checking plazo.unit up
+    // front discards rows whose unit only exists inside the nested JSON).
     let rawPlazo = plazo;
+    if (typeof rawPlazo === 'string') {
+      try {
+        rawPlazo = JSON.parse(rawPlazo);
+      } catch {
+        return '';
+      }
+    }
+    if (!rawPlazo) return '';
     if (typeof rawPlazo.value === 'string' && rawPlazo.value.trim().startsWith('{')) {
       try {
-        rawPlazo = JSON.parse(rawPlazo.value);
+        const inner = JSON.parse(rawPlazo.value);
+        rawPlazo = { value: inner.value ?? '', unit: inner.unit ?? rawPlazo.unit };
       } catch {}
     }
-    const value = rawPlazo.value != null ? String(rawPlazo.value) : '';
+    const value = rawPlazo.value != null && rawPlazo.value !== '' ? String(rawPlazo.value) : '';
+    if (!value) return '';
     const unit = ['days', 'weeks', 'months'].includes(rawPlazo.unit) ? rawPlazo.unit : 'weeks';
     const label = unit === 'days' ? 'días' : unit === 'weeks' ? 'semanas' : 'meses';
     return `${value} ${label}`;
@@ -394,14 +421,26 @@ const BackImg = require('../../../Assets/back.png');
           </View>
         )}
 
-        {Boolean(sale.firmadigital) && (
-          <TouchableOpacity
-            style={styles.downloadButton}
-            onPress={() => setDownloadSale(sale)}
-          >
-            <Text style={styles.buttonText}>Descargar Imagen</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={styles.downloadButton}
+          onPress={() => setDownloadSale(sale)}
+        >
+          <Text style={styles.buttonText}>Descargar Imagen</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.pdfButton}
+          onPress={() => setPdfSale(sale)}
+        >
+          <Text style={styles.buttonText}>Descargar PDF</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.printButton}
+          onPress={() => setPrintSale(sale)}
+        >
+          <Text style={styles.buttonText}>Imprimir recibo</Text>
+        </TouchableOpacity>
       </View>
       </>
     );
@@ -470,6 +509,22 @@ const BackImg = require('../../../Assets/back.png');
         />
       )}
 
+      {printSale && (
+        <PrintTicketModal
+          sale={printSale}
+          onClose={() => setPrintSale(null)}
+        />
+      )}
+
+      {/* Ticket preview that auto-opens the share sheet with the PDF. */}
+      {pdfSale && (
+        <PrintTicketModal
+          sale={pdfSale}
+          autoPdf
+          onClose={() => setPdfSale(null)}
+        />
+      )}
+
       {downloadSale && (
         <Modal
           visible
@@ -491,7 +546,13 @@ const BackImg = require('../../../Assets/back.png');
                 options={{ format: 'png', quality: 1 }}
                 style={styles.receipt}
               >
+                <Image
+                  source={LogoImg}
+                  style={styles.receiptLogo}
+                  resizeMode="contain"
+                />
                 <Text style={styles.receiptBrand}>Huastex</Text>
+                <Text style={styles.receiptWebsite}>Compra en huastex.com</Text>
                 <Text style={styles.receiptTitle}>
                   Comprobante de Venta #{downloadSale.id}
                 </Text>
@@ -499,14 +560,6 @@ const BackImg = require('../../../Assets/back.png');
                 <Text style={styles.receiptText}>
                   <Text style={styles.detailLabel}>Cliente: </Text>
                   {downloadSale.nombre}
-                </Text>
-                <Text style={styles.receiptText}>
-                  <Text style={styles.detailLabel}>Email: </Text>
-                  {downloadSale.email}
-                </Text>
-                <Text style={styles.receiptText}>
-                  <Text style={styles.detailLabel}>Teléfono: </Text>
-                  {downloadSale.phone}
                 </Text>
                 <Text style={styles.receiptText}>
                   <Text style={styles.detailLabel}>Dirección: </Text>
@@ -580,12 +633,18 @@ const BackImg = require('../../../Assets/back.png');
                   </Text>
                 )}
 
-                <Text style={styles.receiptSection}>Firma del cliente</Text>
-                <Image
-                  source={{ uri: downloadSale.firmadigital }}
-                  style={styles.receiptSignature}
-                  resizeMode="contain"
-                />
+                {/* Only when the customer actually signed — otherwise the
+                    image would carry an empty signature box. */}
+                {Boolean(downloadSale.firmadigital) && (
+                  <>
+                    <Text style={styles.receiptSection}>Firma del cliente</Text>
+                    <Image
+                      source={{ uri: downloadSale.firmadigital }}
+                      style={styles.receiptSignature}
+                      resizeMode="contain"
+                    />
+                  </>
+                )}
               </ViewShot>
             </ScrollView>
 
@@ -750,6 +809,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
+  printButton: {
+    backgroundColor: '#fd7e14',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  pdfButton: {
+    backgroundColor: '#17a2b8',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 12,
+  },
   receiptContainer: {
     flex: 1,
     backgroundColor: '#f3f6fb',
@@ -779,11 +852,25 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 8,
   },
+  receiptLogo: {
+    width: 160,
+    height: 90,
+    alignSelf: 'center',
+    marginBottom: 6,
+  },
   receiptBrand: {
     fontSize: 24,
     fontWeight: 'bold',
     textAlign: 'center',
     color: '#007bff',
+  },
+  receiptWebsite: {
+    fontSize: 14,
+    textAlign: 'center',
+    alignSelf: 'center',
+    width: '100%',
+    color: '#333',
+    marginBottom: 4,
   },
   receiptTitle: {
     fontSize: 16,

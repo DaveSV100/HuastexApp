@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Saving the sale image to the gallery on Android 9 and below;
@@ -6,6 +7,43 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+
+    <!-- Bluetooth thermal printer (BLE). Android 12+ uses the new runtime
+         permissions; older versions need the legacy ones plus location to
+         scan for BLE devices. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <!-- react-native-ble-plx declares FINE/COARSE location with no
+         maxSdkVersion (the merger errors on the attribute mismatch);
+         tools:node="replace" makes these capped versions win — location is
+         only required for BLE scanning on Android 11 and below. -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30"
+        tools:node="replace" />
+    <uses-permission
+        android:name="android.permission.ACCESS_COARSE_LOCATION"
+        android:maxSdkVersion="30"
+        tools:node="replace" />
+    <!-- The BLE adapter's AAR also declares these as uses-permission-sdk-23
+         without a cap; same treatment. -->
+    <uses-permission-sdk-23
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30"
+        tools:node="replace" />
+    <uses-permission-sdk-23
+        android:name="android.permission.ACCESS_COARSE_LOCATION"
+        android:maxSdkVersion="30"
+        tools:node="replace" />
 
     <application
       android:name=".MainApplication"

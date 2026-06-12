@@ -41,7 +41,9 @@ export default function InventoryScreen(): JSX.Element {
       const role = await AsyncStorage.getItem('role');
       const branch = await AsyncStorage.getItem('branch');
       setUserRole(role);
-      setUserBranch(branch);
+      // Branch may be stored as a display name ("Cerro Azul") — compare as a
+      // slug ('cerroazul') like the web's role checks expect.
+      setUserBranch((branch || '').toLowerCase().replace(/\s+/g, ''));
     })();
   }, []);
 
@@ -171,13 +173,27 @@ useFocusEffect(
       ) : userBranch === 'cerroazul' ? (
         <>
           <Text style={styles.productRow}><Text style={styles.bold}>Cerro Azul Precio Contado: </Text>{item.cerro_azul_price}</Text>
+          <Text style={styles.productRow}><Text style={styles.bold}>Cerro Azul Precio MSI: </Text>{item.cerro_azul_msiprice}</Text>
+          <Text style={styles.productRow}><Text style={styles.bold}>Cerro Azul Credito Precio: </Text>{item.cerro_azul_creditprice}</Text>
         </>
       ) : userBranch === 'aquismon' ? (
-        <Text style={styles.productRow}><Text style={styles.bold}>Aquismon Precio Contado: </Text>{item.aquismon_price}</Text>
+        <>
+          <Text style={styles.productRow}><Text style={styles.bold}>Aquismon Precio Contado: </Text>{item.aquismon_price}</Text>
+          <Text style={styles.productRow}><Text style={styles.bold}>Aquismon precio MSI: </Text>{item.aquismon_msiprice}</Text>
+          <Text style={styles.productRow}><Text style={styles.bold}>Aquismon Credito Precio: </Text>{item.aquismon_creditprice}</Text>
+        </>
       ) : userBranch === 'tepetzintla' ? (
-        <Text style={styles.productRow}><Text style={styles.bold}>Tepetzintla Precio Contado: </Text>{item.tepetzintla_price}</Text>
+        <>
+          <Text style={styles.productRow}><Text style={styles.bold}>Tepetzintla Precio Contado: </Text>{item.tepetzintla_price}</Text>
+          <Text style={styles.productRow}><Text style={styles.bold}>Tepetzintla Precio MSI: </Text>{item.tepetzintla_msiprice}</Text>
+          <Text style={styles.productRow}><Text style={styles.bold}>Tepetzintla Credito Precio: </Text>{item.tepetzintla_creditprice}</Text>
+        </>
       ) : userBranch === 'tlacolula' ? (
-        <Text style={styles.productRow}><Text style={styles.bold}>Tlacolula Precio: </Text>{item.tlacolula_price}</Text>
+        <>
+          <Text style={styles.productRow}><Text style={styles.bold}>Tlacolula Precio: </Text>{item.tlacolula_price}</Text>
+          <Text style={styles.productRow}><Text style={styles.bold}>Tlacolula Precio MSI: </Text>{item.tlacolula_msiprice}</Text>
+          <Text style={styles.productRow}><Text style={styles.bold}>Tlacolula Credito Precio: </Text>{item.tlacolula_creditprice}</Text>
+        </>
       ) : null}
 
       <Text style={styles.productRow}><Text style={styles.bold}>Número de serie: </Text>{item.serial_number}</Text>

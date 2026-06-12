@@ -1,5 +1,5 @@
 // src/screens/PaymentsScreen.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,10 +8,18 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Modal,
+  ScrollView,
+  Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import ViewShot from 'react-native-view-shot';
+import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 import api from '../api';
+import PrintTicketModal from '../components/PrintTicketModal';
+import ReceiptTicket from '../components/ReceiptTicket';
 
 type PaymentsScreenRouteProp = RouteProp<
   { Payments: { saleId: number } },
@@ -43,6 +51,39 @@ export default function PaymentsScreen(): React.JSX.Element {
   const [sale, setSale] = useState<Sale | null>(null);
   const [loading, setLoading] = useState(false);
   const [role, setRole] = useState<string | null>(null);
+  // Abono shown in the thermal-print preview modal (null = closed).
+  const [printPayment, setPrintPayment] = useState<Payment | null>(null);
+  // Abono shown in the save-as-image preview modal (null = closed).
+  const [downloadPayment, setDownloadPayment] = useState<Payment | null>(null);
+  const [isSavingImage, setIsSavingImage] = useState(false);
+  const receiptRef = useRef<any>(null);
+
+  const handleSavePaymentImage = async () => {
+    if (!receiptRef.current) return;
+    setIsSavingImage(true);
+    try {
+      // Android 9 and below still need the legacy storage permission;
+      // Android 10+ saves through MediaStore without asking.
+      if (Platform.OS === 'android' && Number(Platform.Version) < 29) {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert('Permiso denegado', 'No se puede guardar la imagen sin permiso de almacenamiento.');
+          return;
+        }
+      }
+      const uri = await receiptRef.current.capture();
+      await CameraRoll.saveAsset(uri, { type: 'photo' });
+      Alert.alert('Éxito', 'El abono se guardó como imagen en tu galería.');
+      setDownloadPayment(null);
+    } catch (err) {
+      console.error('Error saving payment image:', err);
+      Alert.alert('Error', 'No se pudo guardar la imagen.');
+    } finally {
+      setIsSavingImage(false);
+    }
+  };
 
   useEffect(() => {
     loadRole();
@@ -139,6 +180,20 @@ export default function PaymentsScreen(): React.JSX.Element {
         </Text>
       </View>
 
+      <TouchableOpacity
+        style={styles.downloadButton}
+        onPress={() => setDownloadPayment(item)}
+      >
+        <Text style={styles.printButtonText}>Descargar Imagen</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.printButton}
+        onPress={() => setPrintPayment(item)}
+      >
+        <Text style={styles.printButtonText}>Imprimir recibo</Text>
+      </TouchableOpacity>
+
       {canDelete && (
         <TouchableOpacity
           style={styles.deleteButton}
@@ -187,6 +242,52 @@ export default function PaymentsScreen(): React.JSX.Element {
           ListEmptyComponent={renderEmpty}
           contentContainerStyle={styles.listContent}
         />
+      )}
+
+      {printPayment && (
+        <PrintTicketModal
+          sale={sale}
+          payment={printPayment}
+          onClose={() => setPrintPayment(null)}
+        />
+      )}
+
+      {downloadPayment && (
+        <Modal
+          visible
+          animationType="slide"
+          onRequestClose={() => setDownloadPayment(null)}
+        >
+          <View style={styles.downloadContainer}>
+            <View style={styles.downloadHeader}>
+              <Text style={styles.downloadHeaderTitle}>
+                Abono #{downloadPayment.id}
+              </Text>
+              <TouchableOpacity onPress={() => setDownloadPayment(null)}>
+                <Text style={styles.downloadCloseButton}>Cerrar</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.downloadPreview}>
+              {/* Everything inside ViewShot is what gets saved. */}
+              <ViewShot ref={receiptRef} options={{ format: 'png', quality: 1 }}>
+                <ReceiptTicket sale={sale} payment={downloadPayment} />
+              </ViewShot>
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.saveImageButton, isSavingImage && styles.saveImageButtonDisabled]}
+              onPress={handleSavePaymentImage}
+              disabled={isSavingImage}
+            >
+              {isSavingImage ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.saveImageButtonText}>Guardar en galería</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </Modal>
       )}
     </View>
   );
@@ -268,6 +369,66 @@ const styles = StyleSheet.create({
   },
   detailValue: {
     color: '#555',
+  },
+  downloadButton: {
+    backgroundColor: '#6f42c1',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  printButton: {
+    backgroundColor: '#fd7e14',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  downloadContainer: {
+    flex: 1,
+    backgroundColor: '#f3f6fb',
+  },
+  downloadHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    paddingTop: 50,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+    backgroundColor: '#fff',
+  },
+  downloadHeaderTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  downloadCloseButton: {
+    color: '#dc3545',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  downloadPreview: {
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  saveImageButton: {
+    backgroundColor: '#28a745',
+    padding: 16,
+    margin: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  saveImageButtonDisabled: {
+    backgroundColor: '#6c757d',
+  },
+  saveImageButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  printButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
   deleteButton: {
     backgroundColor: '#dc3545',

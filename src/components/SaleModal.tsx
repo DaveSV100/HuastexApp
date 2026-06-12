@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import SignatureScreen from 'react-native-signature-canvas';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { buildIncomePayload } from '../utils/Incoms';
+import { matchesAllKeywords } from '../utils/smartSearch';
 import api from '../api';
 
 interface Product {
@@ -436,23 +437,25 @@ export default function SaleModal({
       discountedPrice = totalPrice * (1 - Number(formData.discount) / 100);
     }
     
-    const calculatedPrecioNormal =
-      formData.formaDePago.toLowerCase() === 'contado'
-        ? 0
-        : (discountedPrice * 1.12).toFixed(2);
-    
+    const formaLower = formData.formaDePago.toLowerCase();
+    // Contado has no normal price (it's paid in full); Apartado only tracks
+    // the promo price, so its normal price/saldo stay at 0 as well.
+    const skipNormalPrice = formaLower === 'contado' || formaLower === 'apartado';
+    const calculatedPrecioNormal = skipNormalPrice
+      ? 0
+      : (discountedPrice * 1.12).toFixed(2);
+
     setFormData((prevData) => ({
       ...prevData,
       precioPromocion: discountedPrice.toFixed(2),
       precioNormal: String(calculatedPrecioNormal),
       saldoPrecioPromocion:
-        formData.formaDePago.toLowerCase() === 'contado'
+        formaLower === 'contado'
           ? '0.00'
           : (discountedPrice - Number(formData.enganche)).toFixed(2),
-      saldoPrecioNormal:
-        formData.formaDePago.toLowerCase() === 'contado'
-          ? '0.00'
-          : (Number(calculatedPrecioNormal) - Number(formData.enganche)).toFixed(2),
+      saldoPrecioNormal: skipNormalPrice
+        ? '0.00'
+        : (Number(calculatedPrecioNormal) - Number(formData.enganche)).toFixed(2),
     }));
   }, [
     formData.products,
@@ -548,6 +551,10 @@ export default function SaleModal({
   };
 
   const isContado = formData.formaDePago.toLowerCase() === 'contado';
+  // Apartado only tracks the promo price: the normal-price fields are
+  // disabled (and zeroed by the auto-calculation) so the sale and its
+  // daily-report row don't carry a saldo normal.
+  const isApartado = formData.formaDePago.toLowerCase() === 'apartado';
 
   const webStyle = `
     .m-signature-pad {
@@ -755,7 +762,9 @@ export default function SaleModal({
                     <ScrollView style={styles.searchResults}>
                       {availableInventory
                         .filter((item) =>
-                          item.product.toLowerCase().includes(searchTerms[index].toLowerCase())
+                          // Accent/case-insensitive and word-order-free, same
+                          // as the web inventory search.
+                          matchesAllKeywords(item.product, searchTerms[index])
                         )
                         .map((item) => (
                           <TouchableOpacity
@@ -837,11 +846,14 @@ export default function SaleModal({
 
           <Text style={styles.label}>Precio normal</Text>
           <TextInput
-            style={[styles.input, !manualPricing && styles.inputDisabled]}
+            style={[
+              styles.input,
+              (!manualPricing || isApartado) && styles.inputDisabled,
+            ]}
             value={formData.precioNormal}
             onChangeText={(value) => handleInputChange('precioNormal', value)}
             keyboardType="numeric"
-            editable={manualPricing}
+            editable={manualPricing && !isApartado}
           />
 
           <Text style={styles.label}>Descuento (%)</Text>
@@ -864,11 +876,14 @@ export default function SaleModal({
               />
               <Text style={styles.label}>Saldo Precio Normal</Text>
               <TextInput
-                style={[styles.input, isContado && styles.inputDisabled]}
+                style={[
+                  styles.input,
+                  (isContado || isApartado) && styles.inputDisabled,
+                ]}
                 value={formData.saldoPrecioNormal}
                 onChangeText={(value) => handleInputChange('saldoPrecioNormal', value)}
                 keyboardType="numeric"
-                editable={!isContado}
+                editable={!isContado && !isApartado}
               />
             </>
           )}

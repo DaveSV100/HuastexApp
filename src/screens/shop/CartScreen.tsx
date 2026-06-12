@@ -19,6 +19,7 @@ import {
 import { Buffer } from 'buffer';
 import InAppBrowser from 'react-native-inappbrowser-reborn';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCart } from '../../contexts/CartContext';
 import CartItemRow from '../../components/CartItemRow';
 import { colors } from '../../utils/colors';
@@ -40,6 +41,9 @@ function encodeCart(items: unknown): string {
 export default function CartScreen() {
   const navigation = useNavigation<any>();
   const { items, total, clearCart } = useCart();
+  // Keep the Pagar button above the Android navigation bar / iPhone home
+  // indicator — the app draws edge-to-edge, so the footer needs the inset.
+  const insets = useSafeAreaInsets();
 
   // Closing the browser doesn't tell us whether the payment actually went
   // through (the web saves the sale only on /success). So ask before emptying
@@ -129,7 +133,7 @@ export default function CartScreen() {
         ListHeaderComponent={<Text style={styles.title}>Mi carrito</Text>}
       />
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: 16 + insets.bottom }]}>
         <View style={styles.totalRow}>
           <Text style={styles.totalLabel}>Total</Text>
           <Text style={styles.totalValue}>${total.toFixed(2)}</Text>

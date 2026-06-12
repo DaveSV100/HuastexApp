@@ -39,6 +39,10 @@
 	<string>Se necesita acceso para guardar la venta como imagen en tu galería.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Se necesita acceso a tu galería para guardar la venta como imagen.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Se necesita Bluetooth para conectar con la impresora térmica y poder imprimir recibos.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Se necesita Bluetooth para conectar con la impresora térmica y poder imprimir recibos.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

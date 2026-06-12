@@ -5,9 +5,8 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  TouchableOpacity, 
-  Linking,
-  ActivityIndicator 
+  TouchableOpacity,
+  ActivityIndicator
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../contexts/AuthContext';
@@ -40,10 +39,6 @@ export default function HomeScreen(): React.JSX.Element {
 
     fetchSales();
   }, [user?.email]);
-
-  const openWebsite = () => {
-    Linking.openURL('https://huastex.com');
-  };
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '';
@@ -100,6 +95,9 @@ export default function HomeScreen(): React.JSX.Element {
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Dailyreport')}>
               <Text style={styles.menuButtonText}>Reporte Diario</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Dashboard')}>
+              <Text style={styles.menuButtonText}>Dashboard</Text>
             </TouchableOpacity>
           </>
         )}

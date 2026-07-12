@@ -78,7 +78,7 @@ export default function HomeScreen(): React.JSX.Element {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.welcomeText}>Bienvenido, {user?.name}</Text>
+      <Text style={styles.welcomeText}>Usuario: {user?.name}</Text>
 
       <View style={styles.menuContainer}>
         <TouchableOpacity style={styles.shopButton} onPress={() => navigation.navigate('Shop')}>

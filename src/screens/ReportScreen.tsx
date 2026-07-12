@@ -20,6 +20,7 @@ import { Picker } from '@react-native-picker/picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api'; // adjust path if needed
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { openCashDrawer } from '../utils/thermalPrinter';
 
 const paymentTypeLabels: Record<string, string> = {
   deposit: 'Abono',
@@ -54,6 +55,12 @@ export default function ReportScreen() {
     role === 'admin' || role === 'superadmin' || role === 'staff' || role === 'iT';
 
   const [selectedLocation, setSelectedLocation] = useState('aquismon');
+  // No data is fetched until the stored role/branch have been read, so a
+  // pinned user never sees another branch's numbers flash by first.
+  const [sessionLoaded, setSessionLoaded] = useState(false);
+
+  // staff / iT are pinned to their own branch's report.
+  const isPinnedToBranch = role === 'staff' || role === 'iT';
 
   useEffect(() => {
     (async () => {
@@ -64,10 +71,12 @@ export default function ReportScreen() {
       const branchSlug = storedBranch.toLowerCase().replace(/\s+/g, '');
       setRole(storedRole);
       setUserBranch(branchSlug);
-      // staff / iT are pinned to their own branch's report.
       if (storedRole === 'staff' || storedRole === 'iT') {
-        setSelectedLocation(branchSlug || 'aquismon');
+        // If the session has no branch, leave the selection empty — showing
+        // nothing beats showing some other branch's report.
+        setSelectedLocation(branchSlug);
       }
+      setSessionLoaded(true);
     })();
   }, []);
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -96,29 +105,29 @@ export default function ReportScreen() {
   const [showAccModal, setShowAccModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Refetch whenever the screen regains focus (so deletes/edits made on the
-  // Sales or Payments screens show up here immediately) and whenever the
-  // branch/date filter changes.
-  useFocusEffect(
-    useCallback(() => {
-      fetchTransactions();
-      fetchDailyAccounting();
-    }, [selectedLocation, selectedDate])
-  );
-
-  async function fetchTransactions() {
+  const fetchTransactions = useCallback(async () => {
+    // A pinned user with no known branch must not fetch: omitting the location
+    // param would return every branch's transactions.
+    if (!sessionLoaded || (isPinnedToBranch && !selectedLocation)) return;
     try {
       const branchParam = selectedLocation === 'all' ? undefined : selectedLocation;
+      // `date` narrows the fetch to the selected day server-side; older
+      // servers ignore it and return everything, and filteredTx below trims
+      // to the day either way, so behavior is identical on both.
       const res = await api.get('/transactions', {
-        params: branchParam ? { location: branchParam } : {}
+        params: {
+          date: getLocalDateString(selectedDate),
+          ...(branchParam ? { location: branchParam } : {})
+        }
       });
       setTransactions(res.data || []);
     } catch (e) {
       console.error(e);
     }
-  }
+  }, [selectedLocation, selectedDate, sessionLoaded, isPinnedToBranch]);
 
-  async function fetchDailyAccounting() {
+  const fetchDailyAccounting = useCallback(async () => {
+    if (!sessionLoaded || (isPinnedToBranch && !selectedLocation)) return;
     try {
       const res = await api.get('/daily-accounting', {
         params: {
@@ -126,15 +135,32 @@ export default function ReportScreen() {
           location: selectedLocation
         }
       });
-      setDailyAccounting(res.data || dailyAccounting);
+      setDailyAccounting((prev) => res.data || prev);
     } catch (e) {
       console.error(e);
     }
-  }
+  }, [selectedDate, selectedLocation, sessionLoaded, isPinnedToBranch]);
+
+  // Refetch whenever the screen regains focus (so deletes/edits made on the
+  // Sales or Payments screens show up here immediately) and whenever the
+  // branch/date filter changes.
+  useFocusEffect(
+    useCallback(() => {
+      fetchTransactions();
+      fetchDailyAccounting();
+    }, [fetchTransactions, fetchDailyAccounting])
+  );
 
   const filteredTx = transactions.filter(t => {
     const d = t.transaction_date?.split('T')[0];
-    return d === getLocalDateString(selectedDate);
+    if (d !== getLocalDateString(selectedDate)) return false;
+    // Belt-and-suspenders: even if the server ignores the location param,
+    // never show a row from a branch other than the selected one.
+    if (selectedLocation && selectedLocation !== 'all') {
+      const loc = (t.location || '').toLowerCase().replace(/\s+/g, '');
+      return loc === selectedLocation;
+    }
+    return true;
   });
 
   // Same math as the web's Incoms page: the cash totals exclude card/
@@ -158,6 +184,8 @@ export default function ReportScreen() {
   }
 
   function openNew(type: 'income' | 'outcome') {
+    // Cash is about to go in (ingreso) or out (egreso) of the drawer.
+    openCashDrawer();
     setEditingTx(null);
     setTxType(type);
     setFormData({
@@ -304,9 +332,9 @@ export default function ReportScreen() {
               dropdownIconColor="#333"
             >
               {/* admin/superadmin can inspect any branch; staff/iT are limited to
-                  their own. */}
-              {(role === 'staff' || role === 'iT'
-                ? [userBranch || 'aquismon']
+                  their own (an empty list if their session has no branch). */}
+              {(isPinnedToBranch
+                ? [userBranch].filter(Boolean)
                 : ['all', 'aquismon', 'cerroazul', 'tepetzintla', 'tlacolula']
               ).map(loc => (
                 <Picker.Item key={loc} label={loc} value={loc} color="#000" />
@@ -314,7 +342,14 @@ export default function ReportScreen() {
             </Picker>
           </View>
           <View style={styles.editAccountingBtn}>
-            <Button title="Editar Contabilidad" onPress={() => setShowAccModal(true)} />
+            <Button
+              title="Editar Contabilidad"
+              onPress={() => {
+                // Counting the cash — pop the drawer for the cashier.
+                openCashDrawer();
+                setShowAccModal(true);
+              }}
+            />
           </View>
         </View>
         <View style={styles.filterCol}>
@@ -412,7 +447,7 @@ export default function ReportScreen() {
                 <TextInput
                   placeholder="Nombre"
                   value={formData.name}
-                  onChangeText={v => setFormData(f => ({ ...f, name: v }))}
+                  onChangeText={v => setFormData((f: any) => ({ ...f, name: v }))}
                   style={styles.input}
                 />
                 {txType === 'income' && (
@@ -420,12 +455,12 @@ export default function ReportScreen() {
                     <TextInput
                       placeholder="Producto"
                       value={formData.product}
-                      onChangeText={v => setFormData(f => ({ ...f, product: v }))}
+                      onChangeText={v => setFormData((f: any) => ({ ...f, product: v }))}
                       style={styles.input}
                     />
                     <Picker
                       selectedValue={formData.payment_type}
-                      onValueChange={v => setFormData(f => ({ ...f, payment_type: v }))}
+                      onValueChange={v => setFormData((f: any) => ({ ...f, payment_type: v }))}
                     >
                       {Object.entries(paymentTypeLabels).map(([k, label]) => (
                         <Picker.Item key={k} label={label} value={k} />
@@ -437,7 +472,7 @@ export default function ReportScreen() {
                   placeholder="Monto"
                   value={String(formData.value)}
                   keyboardType="numeric"
-                  onChangeText={v => setFormData(f => ({ ...f, value: v }))}
+                  onChangeText={v => setFormData((f: any) => ({ ...f, value: v }))}
                   style={styles.input}
                 />
                 {txType === 'income' && (
@@ -446,14 +481,14 @@ export default function ReportScreen() {
                       placeholder="Saldo"
                       value={String(formData.saldo)}
                       keyboardType="numeric"
-                      onChangeText={v => setFormData(f => ({ ...f, saldo: v }))}
+                      onChangeText={v => setFormData((f: any) => ({ ...f, saldo: v }))}
                       style={styles.input}
                     />
                     <TextInput
                       placeholder="Por pagar"
                       value={String(formData.por_pagar)}
                       keyboardType="numeric"
-                      onChangeText={v => setFormData(f => ({ ...f, por_pagar: v }))}
+                      onChangeText={v => setFormData((f: any) => ({ ...f, por_pagar: v }))}
                       style={styles.input}
                     />
                   </>

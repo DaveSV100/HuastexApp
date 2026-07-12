@@ -6,6 +6,7 @@ import {
   formatMoney,
   compactMoney,
   incomeLastDays,
+  netoLastMonths,
 } from '../src/utils/dashboardStats';
 
 const TODAY = '2026-06-11';
@@ -151,5 +152,76 @@ describe('incomeLastDays', () => {
     expect(may31?.total).toBe(50);
     const june2 = days.find(d => d.day === '2026-06-02');
     expect(june2?.total).toBe(0); // cerroazul income filtered out
+  });
+});
+
+describe('netoLastMonths', () => {
+  it('returns one entry per month, oldest first, with income − outcome', () => {
+    const result = netoLastMonths(transactions, 'all', TODAY);
+    expect(result).toHaveLength(6);
+    expect(result.map(r => r.month)).toEqual([
+      '2026-01',
+      '2026-02',
+      '2026-03',
+      '2026-04',
+      '2026-05',
+      '2026-06',
+    ]);
+    expect(result.map(r => r.label)).toEqual([
+      'ene',
+      'feb',
+      'mar',
+      'abr',
+      'may',
+      'jun',
+    ]);
+    expect(result[5].total).toBe(820); // 225 + 695 − 100
+    expect(result[4].total).toBe(50);
+    expect(result[0].total).toBe(0);
+  });
+
+  it('crosses year boundaries and marks past-year labels', () => {
+    const result = netoLastMonths(transactions, 'all', '2026-02-15');
+    expect(result[0].month).toBe('2025-09');
+    expect(result[0].label).toBe("sep '25");
+    expect(result[5].month).toBe('2026-02');
+    expect(result[5].label).toBe('feb');
+  });
+
+  it('filters by branch', () => {
+    const result = netoLastMonths(transactions, 'cerroazul', TODAY);
+    expect(result[5].total).toBe(695); // only the cerroazul income
+    expect(result[4].total).toBe(0); // aquismon May income excluded
+  });
+
+  it('goes negative when outcomes exceed incomes and ignores other types', () => {
+    const tx = [
+      {
+        transaction_type: 'income',
+        value: '100.00',
+        transaction_date: '2026-06-05',
+        location: 'aquismon',
+      },
+      {
+        transaction_type: 'outcome',
+        value: '350.00',
+        transaction_date: '2026-06-08',
+        location: 'aquismon',
+      },
+      {
+        transaction_type: 'transfer',
+        value: '999.00',
+        transaction_date: '2026-06-09',
+        location: 'aquismon',
+      },
+    ];
+    const result = netoLastMonths(tx, 'all', TODAY);
+    expect(result[5].total).toBe(-250);
+  });
+
+  it('tolerates empty input', () => {
+    const result = netoLastMonths(undefined as any, 'all', TODAY, 3);
+    expect(result).toHaveLength(3);
+    expect(result.every(r => r.total === 0)).toBe(true);
   });
 });

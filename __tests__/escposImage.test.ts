@@ -6,7 +6,6 @@ import {
   decodePngBase64,
   toGrayResized,
   ditherToMono,
-  monoToRasterCommands,
   pngBase64ToEscPos,
   PRINTER_DOTS,
 } from '../src/utils/escposImage';

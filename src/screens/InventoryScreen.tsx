@@ -10,7 +10,6 @@ import {
   FlatList,
   Alert,
   ActivityIndicator,
-  ScrollView
 } from 'react-native';
 import { useNavigation, useFocusEffect, CommonActions } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -22,7 +21,7 @@ const BackImg = require('../../Assets/back.png'); // adjust path if needed
 type Product = { id: number; product: string; [key: string]: any };
 type Formula = { id: number; name: string; operators?: string };
 
-export default function InventoryScreen(): JSX.Element {
+export default function InventoryScreen(): React.JSX.Element {
   const navigation = useNavigation();
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userBranch, setUserBranch] = useState<string | null>(null);

@@ -1,0 +1,7 @@
+# fastlane/Appfile — shared app identifiers.
+# iOS auth uses an App Store Connect API key and Android uses a Play
+# service-account JSON, both read from env vars in the Fastfile (see
+# fastlane/.env.example), so no Apple ID / passwords live here.
+
+app_identifier("org.reactjs.native.example.HuastexApp") # iOS bundle identifier (matches the live App Store listing "Huastex")
+package_name("com.huastexapp")   # Android applicationId

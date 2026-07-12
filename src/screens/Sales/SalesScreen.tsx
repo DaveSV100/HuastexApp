@@ -14,6 +14,7 @@ import {
   ScrollView,
   Platform,
   PermissionsAndroid,
+  AppState,
 } from 'react-native';
 import ViewShot from 'react-native-view-shot';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
@@ -23,6 +24,13 @@ import PaymentsModal from '../../components/PaymentsModal';
 import PrintTicketModal from '../../components/PrintTicketModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, CommonActions, useFocusEffect, useRoute } from '@react-navigation/native';
+import { getPaymentInfo, SaleStatus } from '../../utils/paymentStatus';
+import {
+  normalizePhoneMx,
+  buildPaymentReminder,
+  openWhatsAppText,
+  shareImageToWhatsApp,
+} from '../../utils/whatsapp';
 
 interface Sale {
   id: number;
@@ -47,7 +55,27 @@ interface Sale {
   agentedeventas: string;
   aclaraciones: string;
   firmadigital?: string;
+  payment_frequency?: string | null;
+  pp_enabled?: boolean | null;
 }
+
+const STATUS_META: Record<SaleStatus, { label: string; icon: any }> = {
+  vencida: { label: 'Vencidas', icon: require('../../../Assets/overdue.png') },
+  atrasada: { label: 'Atrasadas', icon: require('../../../Assets/late.png') },
+  a_tiempo: { label: 'A tiempo', icon: require('../../../Assets/ontime.png') },
+  pagada: { label: 'Pagadas', icon: require('../../../Assets/paid.png') },
+};
+const STATUS_KEYS = Object.keys(STATUS_META) as SaleStatus[];
+
+// Extra orderings offered while an estado filter (except pagadas) is active;
+// 'id' = the default "newest sale first" used everywhere else.
+type SortMode = 'id' | 'cantidad' | 'tiempo' | 'vencimiento';
+const SORT_LABELS: Record<SortMode, string> = {
+  id: 'Más reciente',
+  cantidad: 'Cantidad atrasada',
+  tiempo: 'Tiempo atrasado',
+  vencimiento: 'Vencimiento próximo',
+};
 
 // Lowercase and strip accents so the search matches regardless of tildes:
 // "Pérez" is found typing "perez" and "Maria" is found typing "maría".
@@ -73,6 +101,7 @@ export default function SalesScreen(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [role, setRole] = useState<string | null>(null);
+  const [userBranch, setUserBranch] = useState('');
   // Sale shown in the "download as image" preview modal (null = closed).
   const [downloadSale, setDownloadSale] = useState<Sale | null>(null);
   const [isSavingImage, setIsSavingImage] = useState(false);
@@ -81,13 +110,30 @@ export default function SalesScreen(): React.JSX.Element {
   const [printSale, setPrintSale] = useState<Sale | null>(null);
   // Sale opened in the ticket preview with the PDF share auto-triggered.
   const [pdfSale, setPdfSale] = useState<Sale | null>(null);
+  // Estado filter driven by the notebook menu (null = show every sale).
+  const [statusFilter, setStatusFilter] = useState<SaleStatus | null>(null);
+  const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
+  // Only applied while an eligible estado filter is active; resets to the
+  // default whenever the filter changes so lists always start predictable.
+  const [sortMode, setSortMode] = useState<SortMode>('id');
+  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
+  // Bulk WhatsApp reminders: pending sales + whether we're waiting for the
+  // user to come back from WhatsApp before offering the next one.
+  const reminderQueueRef = useRef<Sale[]>([]);
+  const awaitingWhatsAppReturnRef = useRef(false);
 
 const BackImg = require('../../../Assets/back.png');
 const LogoImg = require('../../../Assets/logo.png');
+const NotebookImg = require('../../../Assets/notebook.png');
+const DownloadImg = require('../../../Assets/download.png');
+const EditImg = require('../../../Assets/edit.png');
+const TrashImg = require('../../../Assets/trash.png');
 
   const loadRole = async () => {
     const userRole = await AsyncStorage.getItem('role');
+    const storedBranch = (await AsyncStorage.getItem('branch')) || '';
     setRole(userRole);
+    setUserBranch(storedBranch);
   };
 
   useEffect(() => {
@@ -185,6 +231,30 @@ const LogoImg = require('../../../Assets/logo.png');
     handleClosePaymentsModal();
   };
 
+  // "Habilitar PP": manually restore the promo price after the 15-day window.
+  const handleEnablePP = (sale: Sale) => {
+    Alert.alert(
+      'Habilitar Precio Promoción',
+      `¿Restaurar el precio de promoción de la venta #${sale.id}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Habilitar',
+          onPress: async () => {
+            try {
+              await api.patch(`/sales/${sale.id}/pp`, { enabled: true });
+              fetchSales();
+              Alert.alert('Éxito', 'Precio de promoción habilitado');
+            } catch (err) {
+              console.error('Error enabling PP:', err);
+              Alert.alert('Error', 'No se pudo habilitar el precio de promoción');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleSearchChange = (text: string) => {
     setSearchQuery(text.toLowerCase());
   };
@@ -216,9 +286,125 @@ const LogoImg = require('../../../Assets/logo.png');
     }
   };
 
+  // ── WhatsApp ──────────────────────────────────────────────────────────
+  const handleSendReminder = (sale: Sale) => {
+    const phone = normalizePhoneMx(sale.phone);
+    if (!phone) {
+      Alert.alert('Sin teléfono', 'Esta venta no tiene un número de teléfono válido.');
+      return;
+    }
+    openWhatsAppText(phone, buildPaymentReminder(sale, getPaymentInfo(sale)));
+  };
+
+  const handleSendSaleImageWhatsApp = async () => {
+    if (!receiptRef.current || !downloadSale) return;
+    setIsSendingWhatsApp(true);
+    try {
+      const uri = await receiptRef.current.capture();
+      await shareImageToWhatsApp(normalizePhoneMx(downloadSale.phone), uri);
+    } catch (err) {
+      console.error('Error sharing sale image:', err);
+      Alert.alert('Error', 'No se pudo compartir la imagen.');
+    } finally {
+      setIsSendingWhatsApp(false);
+    }
+  };
+
+  // Bulk reminders walk the filtered list one WhatsApp chat at a time: the
+  // OS can't send messages unattended, so each customer needs one tap on
+  // WhatsApp's send button. When the user returns to the app we offer the
+  // next customer automatically.
+  const offerNextReminder = useCallback(() => {
+    const next = reminderQueueRef.current[0];
+    if (!next) {
+      Alert.alert('Listo', 'No quedan más recordatorios por enviar.');
+      return;
+    }
+    const remaining = reminderQueueRef.current.length;
+    const info = getPaymentInfo(next);
+    Alert.alert(
+      `Recordatorio — quedan ${remaining}`,
+      `${next.nombre} (venta #${next.id})`,
+      [
+        {
+          text: 'Detener',
+          style: 'cancel',
+          onPress: () => {
+            reminderQueueRef.current = [];
+          },
+        },
+        {
+          text: 'Omitir',
+          onPress: () => {
+            reminderQueueRef.current = reminderQueueRef.current.slice(1);
+            offerNextReminder();
+          },
+        },
+        {
+          text: 'Enviar',
+          onPress: () => {
+            reminderQueueRef.current = reminderQueueRef.current.slice(1);
+            awaitingWhatsAppReturnRef.current = true;
+            const phone = normalizePhoneMx(next.phone);
+            if (phone) {
+              openWhatsAppText(phone, buildPaymentReminder(next, info));
+            }
+          },
+        },
+      ],
+    );
+  }, []);
+
+  // Coming back from WhatsApp re-activates the app → offer the next one.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && awaitingWhatsAppReturnRef.current) {
+        awaitingWhatsAppReturnRef.current = false;
+        setTimeout(offerNextReminder, 600);
+      }
+    });
+    return () => sub.remove();
+  }, [offerNextReminder]);
+
+  const startBulkReminders = (targets: Sale[]) => {
+    const withPhone = targets.filter((s) => normalizePhoneMx(s.phone));
+    const skipped = targets.length - withPhone.length;
+    if (!withPhone.length) {
+      Alert.alert('Sin teléfonos', 'Ninguna de estas ventas tiene un número válido.');
+      return;
+    }
+    Alert.alert(
+      'Recordatorios por WhatsApp',
+      `Se abrirá WhatsApp para ${withPhone.length} cliente(s), uno por uno.` +
+        (skipped ? ` ${skipped} venta(s) sin teléfono se omitirán.` : ''),
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Comenzar',
+          onPress: () => {
+            reminderQueueRef.current = withPhone;
+            offerNextReminder();
+          },
+        },
+      ],
+    );
+  };
+
+  // staff/iT only ever see their own branch's sales; admin/superadmin see all.
+  // The branch may be stored as a display name ("Cerro Azul") while sales carry
+  // slugs ("cerroazul"), so normalize both sides before comparing. While the
+  // role is still loading nothing is shown, so other branches never flash by.
+  const toBranchSlug = (s: string) => (s || '').toLowerCase().replace(/\s+/g, '');
+  const branchScopedSales =
+    role === null
+      ? []
+      : role === 'staff' || role === 'iT'
+      ? sales.filter((sale) => sale && toBranchSlug(sale.sucursal) === toBranchSlug(userBranch))
+      : sales;
+
   // Both sides are accent-stripped so "Pérez" matches "perez" and vice versa.
   const normalizedQuery = normalizeSearchText(searchQuery);
-  const filteredSales = sales.filter((sale) => {
+  const filteredSales = branchScopedSales.filter((sale) => {
     if (!sale) return false;
     const matchesId = sale.id.toString().includes(normalizedQuery);
     const matchesName = normalizeSearchText(sale.nombre || '').includes(normalizedQuery);
@@ -229,7 +415,60 @@ const LogoImg = require('../../../Assets/logo.png');
     return matchesId || matchesName || matchesProduct;
   });
 
-  const sortedSales = [...filteredSales].sort((a, b) => b.id - a.id);
+  // Counts shown in the notebook menu (over the search results, before the
+  // estado filter is applied, so the numbers always add up to what's listed).
+  const statusCounts = filteredSales.reduce(
+    (acc, sale) => {
+      acc[getPaymentInfo(sale).status] += 1;
+      return acc;
+    },
+    { vencida: 0, atrasada: 0, a_tiempo: 0, pagada: 0 } as Record<SaleStatus, number>
+  );
+
+  const statusFilteredSales = statusFilter
+    ? filteredSales.filter((sale) => getPaymentInfo(sale).status === statusFilter)
+    : filteredSales;
+
+  // Default order everywhere: newest sale first. While an estado filter
+  // (except pagadas) is active, the "Ordenar" button can switch to a
+  // collection-priority order; getPaymentInfo is computed once per sale
+  // (not per comparison) before sorting.
+  const sortableFilter =
+    statusFilter === 'atrasada' ||
+    statusFilter === 'vencida' ||
+    statusFilter === 'a_tiempo';
+  let sortedSales: Sale[];
+  if (sortableFilter && sortMode !== 'id') {
+    const decorated = statusFilteredSales.map((s) => ({ s, info: getPaymentInfo(s) }));
+    decorated.sort((a, b) => {
+      if (sortMode === 'cantidad') {
+        // Biggest debt first.
+        if (b.info.cantidadAtrasada !== a.info.cantidadAtrasada) {
+          return b.info.cantidadAtrasada - a.info.cantidadAtrasada;
+        }
+      } else if (sortMode === 'tiempo') {
+        // Most overdue first: periods behind, then days past due.
+        if (b.info.tiempoAtrasado !== a.info.tiempoAtrasado) {
+          return b.info.tiempoAtrasado - a.info.tiempoAtrasado;
+        }
+        const dA = a.info.daysPastDue ?? -Infinity;
+        const dB = b.info.daysPastDue ?? -Infinity;
+        if (dB !== dA) return dB - dA;
+      } else {
+        // Soonest fecha de vencimiento first; sales without a (valid) date
+        // go last.
+        const rawA = new Date(a.s.fechavencimiento || '').getTime();
+        const rawB = new Date(b.s.fechavencimiento || '').getTime();
+        const tA = Number.isNaN(rawA) ? Infinity : rawA;
+        const tB = Number.isNaN(rawB) ? Infinity : rawB;
+        if (tA !== tB) return tA - tB;
+      }
+      return b.s.id - a.s.id;
+    });
+    sortedSales = decorated.map((d) => d.s);
+  } else {
+    sortedSales = [...statusFilteredSales].sort((a, b) => b.id - a.id);
+  }
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return '';
@@ -278,13 +517,25 @@ const LogoImg = require('../../../Assets/logo.png');
     const discount = isNaN(Number(sale.discount)) ? 0 : Number(sale.discount);
     const creditForms = ['Crédito', 'MSI', 'Apartado'];
     const isCreditSale = creditForms.includes(sale.formadepago);
-    
+    // Payment-plan math: estado, installment, atrasos, promo window, recargo.
+    const info = getPaymentInfo(sale);
+
     return (
       <>
         <View style={styles.saleCard}>
         <View style={styles.saleHeader}>
-          <Text style={styles.saleId}>ID: {sale.id}</Text>
-          <Text style={styles.saleName}>{sale.nombre}</Text>
+          <View style={styles.saleHeaderLeft}>
+            <Text style={styles.saleId}>ID: {sale.id}</Text>
+            <Text style={styles.saleName}>{sale.nombre}</Text>
+          </View>
+          <View style={styles.estadoBadge}>
+            <Text style={styles.estadoLabel}>Estado:</Text>
+            <Image
+              source={STATUS_META[info.status].icon}
+              style={styles.estadoIcon}
+              resizeMode="contain"
+            />
+          </View>
         </View>
 
         <View style={styles.saleDetails}>
@@ -321,7 +572,11 @@ const LogoImg = require('../../../Assets/logo.png');
           <Text style={styles.detailText}>
             <Text style={styles.detailLabel}>Enganche: </Text>${sale.enganche}
           </Text>
-          <Text style={styles.detailText}>
+          {/* Grayed out >15 days past due: only precio normal applies then,
+              unless staff pressed "Habilitar PP". */}
+          <Text
+            style={[styles.detailText, !info.promoActive && styles.detailTextInactive]}
+          >
             <Text style={styles.detailLabel}>Saldo Precio Promoción: </Text>
             ${sale.saldo_precio_promocion}
           </Text>
@@ -329,6 +584,14 @@ const LogoImg = require('../../../Assets/logo.png');
             <Text style={styles.detailLabel}>Saldo Precio Normal: </Text>
             ${sale.saldo_precio_normal}
           </Text>
+          {info.surchargePct > 0 && (
+            <Text style={[styles.detailText, styles.surchargeText]}>
+              <Text style={styles.detailLabel}>
+                Saldo Precio Normal (recargo +{info.surchargePct}%):{' '}
+              </Text>
+              ${info.saldoNormalConRecargo.toFixed(2)}
+            </Text>
+          )}
           <Text style={styles.detailText}>
             <Text style={styles.detailLabel}>Fecha de Vencimiento: </Text>
             {formatDate(sale.fechavencimiento)}
@@ -361,6 +624,39 @@ const LogoImg = require('../../../Assets/logo.png');
             <Text style={styles.detailLabel}>Plazo: </Text>
             {formatPlazo(sale.plazo)}
           </Text>
+          {info.isCredit && (
+            <>
+              {info.frequency && (
+                <Text style={styles.detailText}>
+                  <Text style={styles.detailLabel}>Frecuencia de pago: </Text>
+                  {info.frequency}
+                </Text>
+              )}
+              {info.pagosDe != null && (
+                <Text style={styles.detailText}>
+                  <Text style={styles.detailLabel}>Pagos de: </Text>
+                  ${info.pagosDe.toFixed(2)}
+                  {info.frequency === 'Al terminar' ? ' (al terminar el plazo)' : ''}
+                </Text>
+              )}
+              {info.status !== 'pagada' && (
+                <>
+                  <Text style={styles.detailText}>
+                    <Text style={styles.detailLabel}>Tiempo atrasado: </Text>
+                    {info.periodLabel
+                      ? `${info.tiempoAtrasado} ${info.periodLabel}`
+                      : info.daysPastDue != null && info.daysPastDue > 0
+                        ? `${info.daysPastDue} día(s)`
+                        : '0'}
+                  </Text>
+                  <Text style={styles.detailText}>
+                    <Text style={styles.detailLabel}>Cantidad atrasada: </Text>
+                    ${info.cantidadAtrasada.toFixed(2)}
+                  </Text>
+                </>
+              )}
+            </>
+          )}
           <Text style={styles.detailText}>
             <Text style={styles.detailLabel}>Sucursal: </Text>
             {sale.sucursal}
@@ -381,6 +677,19 @@ const LogoImg = require('../../../Assets/logo.png');
             <Text style={styles.detailLabel}>Aclaraciones: </Text>
             {sale.aclaraciones}
           </Text>
+
+          {info.isCredit && info.status === 'pagada' && (
+            <Text style={styles.paidBadge}>PAGADO</Text>
+          )}
+
+          {canEditDelete && info.isCredit && !info.promoActive && (
+            <TouchableOpacity
+              style={styles.enablePpButton}
+              onPress={() => handleEnablePP(sale)}
+            >
+              <Text style={styles.enablePpButtonText}>Habilitar PP</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {isCreditSale && (
@@ -404,36 +713,56 @@ const LogoImg = require('../../../Assets/logo.png');
           </View>
         )}
 
-        {canEditDelete && (
-          <View style={styles.actionsContainer}>
+        <View style={styles.iconActionsRow}>
+          <TouchableOpacity
+            style={styles.iconActionButton}
+            onPress={() =>
+              Alert.alert('Descargar', 'Elige el formato', [
+                { text: 'Imagen', onPress: () => setDownloadSale(sale) },
+                { text: 'PDF', onPress: () => setPdfSale(sale) },
+                { text: 'Cancelar', style: 'cancel' },
+              ])
+            }
+          >
+            <Image source={DownloadImg} style={styles.actionIcon} resizeMode="contain" />
+          </TouchableOpacity>
+
+          {canEditDelete && (
+            <>
+              <TouchableOpacity
+                style={styles.iconActionButton}
+                onPress={() => handleEditSale(sale)}
+              >
+                <Image source={EditImg} style={styles.actionIcon} resizeMode="contain" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.iconActionButton}
+                onPress={() => handleDeleteSale(sale.id)}
+              >
+                <Image source={TrashImg} style={styles.actionIcon} resizeMode="contain" />
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
+        {Boolean(normalizePhoneMx(sale.phone)) && (
+          <View style={styles.downloadRow}>
+            {info.isCredit && info.status !== 'pagada' && (
+              <TouchableOpacity
+                style={styles.whatsappButton}
+                onPress={() => handleSendReminder(sale)}
+              >
+                <Text style={styles.buttonText}>Recordar pago</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
-              style={styles.editButton}
-              onPress={() => handleEditSale(sale)}
+              style={styles.whatsappButton}
+              onPress={() => setDownloadSale(sale)}
             >
-              <Text style={styles.buttonText}>Editar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => handleDeleteSale(sale.id)}
-            >
-              <Text style={styles.buttonText}>Eliminar</Text>
+              <Text style={styles.buttonText}>Enviar recibo</Text>
             </TouchableOpacity>
           </View>
         )}
-
-        <TouchableOpacity
-          style={styles.downloadButton}
-          onPress={() => setDownloadSale(sale)}
-        >
-          <Text style={styles.buttonText}>Descargar Imagen</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.pdfButton}
-          onPress={() => setPdfSale(sale)}
-        >
-          <Text style={styles.buttonText}>Descargar PDF</Text>
-        </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.printButton}
@@ -450,15 +779,82 @@ const LogoImg = require('../../../Assets/logo.png');
     <View style={styles.container}>
       {/* Header moved OUTSIDE of FlatList to prevent TextInput losing focus */}
       <View style={styles.headerContainer}>
-        <TouchableOpacity onPress={() => navigation.dispatch(
-        CommonActions.reset({
-          index: 0,
-          routes: [{ name: 'Home' }],
-        })
-      )}>
-        <Image source={BackImg} style={styles.backIcon} />
-      </TouchableOpacity>
-        <Text style={styles.title}>Ventas</Text>
+        <View style={styles.headerTopRow}>
+          <TouchableOpacity onPress={() => navigation.dispatch(
+            CommonActions.reset({
+              index: 0,
+              routes: [{ name: 'Home' }],
+            })
+          )}>
+            <Image source={BackImg} style={styles.backIcon} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Ventas</Text>
+          <TouchableOpacity onPress={() => setIsStatusMenuOpen(true)}>
+            <Image source={NotebookImg} style={styles.notebookIcon} resizeMode="contain" />
+          </TouchableOpacity>
+        </View>
+
+        {statusFilter && (
+          <TouchableOpacity
+            style={styles.activeFilterChip}
+            onPress={() => {
+              setStatusFilter(null);
+              setSortMode('id');
+            }}
+          >
+            <Image
+              source={STATUS_META[statusFilter].icon}
+              style={styles.activeFilterIcon}
+              resizeMode="contain"
+            />
+            <Text style={styles.activeFilterText}>
+              {STATUS_META[statusFilter].label} — tocar para mostrar todas
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {sortableFilter && (
+          <TouchableOpacity
+            style={styles.sortButton}
+            onPress={() =>
+              Alert.alert('Ordenar por', undefined, [
+                {
+                  text: 'Cantidad atrasada (mayor primero)',
+                  onPress: () => setSortMode('cantidad'),
+                },
+                {
+                  text: 'Tiempo atrasado (más atrasado primero)',
+                  onPress: () => setSortMode('tiempo'),
+                },
+                {
+                  text: 'Vencimiento (más próximo primero)',
+                  onPress: () => setSortMode('vencimiento'),
+                },
+                {
+                  text: 'Más reciente (por defecto)',
+                  onPress: () => setSortMode('id'),
+                },
+                { text: 'Cancelar', style: 'cancel' },
+              ])
+            }
+          >
+            <Text style={styles.sortButtonText}>
+              Ordenar: {SORT_LABELS[sortMode]} ▾
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {(statusFilter === 'atrasada' || statusFilter === 'vencida') &&
+          sortedSales.length > 0 && (
+            <TouchableOpacity
+              style={styles.bulkReminderButton}
+              onPress={() => startBulkReminders(sortedSales)}
+            >
+              <Text style={styles.buttonText}>
+                Recordar pago a todos ({sortedSales.length})
+              </Text>
+            </TouchableOpacity>
+          )}
 
         <View style={styles.searchContainer}>
           <TextInput
@@ -490,6 +886,58 @@ const LogoImg = require('../../../Assets/logo.png');
           contentContainerStyle={styles.listContent}
         />
       )}
+
+      {/* Notebook menu: filter the list by estado. */}
+      <Modal
+        visible={isStatusMenuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsStatusMenuOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.menuOverlay}
+          activeOpacity={1}
+          onPress={() => setIsStatusMenuOpen(false)}
+        >
+          <View style={styles.statusMenu}>
+            {STATUS_KEYS.map((key) => (
+              <TouchableOpacity
+                key={key}
+                style={[
+                  styles.statusMenuItem,
+                  statusFilter === key && styles.statusMenuItemActive,
+                ]}
+                onPress={() => {
+                  setStatusFilter((prev) => (prev === key ? null : key));
+                  setSortMode('id');
+                  setIsStatusMenuOpen(false);
+                }}
+              >
+                <Image
+                  source={STATUS_META[key].icon}
+                  style={styles.statusMenuIcon}
+                  resizeMode="contain"
+                />
+                <Text style={styles.statusMenuLabel}>
+                  {STATUS_META[key].label} ({statusCounts[key]})
+                </Text>
+              </TouchableOpacity>
+            ))}
+            {statusFilter && (
+              <TouchableOpacity
+                style={styles.statusMenuItem}
+                onPress={() => {
+                  setStatusFilter(null);
+                  setSortMode('id');
+                  setIsStatusMenuOpen(false);
+                }}
+              >
+                <Text style={styles.statusMenuClear}>Mostrar todas</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {isSaleModalOpen && (
         <SaleModal
@@ -594,26 +1042,51 @@ const LogoImg = require('../../../Assets/logo.png');
                   ))}
 
                 <Text style={styles.receiptSection}>Importes</Text>
-                <Text style={styles.receiptText}>
-                  <Text style={styles.detailLabel}>Precio Normal: </Text>
-                  ${downloadSale.precionormal}
-                </Text>
-                <Text style={styles.receiptText}>
-                  <Text style={styles.detailLabel}>Precio Promoción: </Text>
-                  ${downloadSale.preciopromocion}
-                </Text>
-                <Text style={styles.receiptText}>
-                  <Text style={styles.detailLabel}>Enganche: </Text>
-                  ${downloadSale.enganche}
-                </Text>
-                <Text style={styles.receiptText}>
-                  <Text style={styles.detailLabel}>Saldo Precio Promoción: </Text>
-                  ${downloadSale.saldo_precio_promocion}
-                </Text>
-                <Text style={styles.receiptText}>
-                  <Text style={styles.detailLabel}>Saldo Precio Normal: </Text>
-                  ${downloadSale.saldo_precio_normal}
-                </Text>
+                {(() => {
+                  // Promo rule: once the promo window is gone the customer
+                  // only sees normal pricing with the surcharge included.
+                  const dlInfo = getPaymentInfo(downloadSale);
+                  const promoGone = dlInfo.isCredit && !dlInfo.promoActive;
+                  const factor = 1 + dlInfo.surchargePct / 100;
+                  const normalShown = promoGone
+                    ? (Number(downloadSale.precionormal) * factor).toFixed(2)
+                    : downloadSale.precionormal;
+                  const saldoNormalShown = promoGone
+                    ? dlInfo.saldoNormalConRecargo.toFixed(2)
+                    : downloadSale.saldo_precio_normal;
+                  return (
+                    <>
+                      <Text style={styles.receiptText}>
+                        <Text style={styles.detailLabel}>
+                          Precio Normal{promoGone && dlInfo.surchargePct ? ' (con interés)' : ''}:{' '}
+                        </Text>
+                        ${normalShown}
+                      </Text>
+                      {!promoGone && (
+                        <Text style={styles.receiptText}>
+                          <Text style={styles.detailLabel}>Precio Promoción: </Text>
+                          ${downloadSale.preciopromocion}
+                        </Text>
+                      )}
+                      <Text style={styles.receiptText}>
+                        <Text style={styles.detailLabel}>Enganche: </Text>
+                        ${downloadSale.enganche}
+                      </Text>
+                      {!promoGone && (
+                        <Text style={styles.receiptText}>
+                          <Text style={styles.detailLabel}>Saldo Precio Promoción: </Text>
+                          ${downloadSale.saldo_precio_promocion}
+                        </Text>
+                      )}
+                      <Text style={styles.receiptText}>
+                        <Text style={styles.detailLabel}>
+                          Saldo Precio Normal{promoGone && dlInfo.surchargePct ? ' (con interés)' : ''}:{' '}
+                        </Text>
+                        ${saldoNormalShown}
+                      </Text>
+                    </>
+                  );
+                })()}
                 <Text style={styles.receiptText}>
                   <Text style={styles.detailLabel}>Plazo: </Text>
                   {formatPlazo(downloadSale.plazo)}
@@ -632,6 +1105,13 @@ const LogoImg = require('../../../Assets/logo.png');
                     {downloadSale.aclaraciones}
                   </Text>
                 )}
+
+                {(() => {
+                  const dlInfo = getPaymentInfo(downloadSale);
+                  return dlInfo.isCredit && dlInfo.status === 'pagada' ? (
+                    <Text style={styles.receiptPaidStamp}>PAGADO</Text>
+                  ) : null;
+                })()}
 
                 {/* Only when the customer actually signed — otherwise the
                     image would carry an empty signature box. */}
@@ -659,6 +1139,25 @@ const LogoImg = require('../../../Assets/logo.png');
                 <Text style={styles.receiptSaveButtonText}>Guardar en galería</Text>
               )}
             </TouchableOpacity>
+
+            {Boolean(normalizePhoneMx(downloadSale.phone)) && (
+              <TouchableOpacity
+                style={[
+                  styles.receiptWhatsAppButton,
+                  isSendingWhatsApp && styles.receiptSaveButtonDisabled,
+                ]}
+                onPress={handleSendSaleImageWhatsApp}
+                disabled={isSendingWhatsApp}
+              >
+                {isSendingWhatsApp ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.receiptSaveButtonText}>
+                    Enviar por WhatsApp
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         </Modal>
       )}
@@ -683,11 +1182,42 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 100,
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 16,
     textAlign: 'center',
+  },
+  notebookIcon: {
+    width: 36,
+    height: 36,
+  },
+  activeFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#e7f1ff',
+    borderWidth: 1,
+    borderColor: '#007bff',
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+  },
+  activeFilterIcon: {
+    width: 18,
+    height: 18,
+    marginRight: 6,
+  },
+  activeFilterText: {
+    color: '#007bff',
+    fontSize: 13,
+    fontWeight: '600',
   },
   searchContainer: {
     marginBottom: 16,
@@ -726,6 +1256,27 @@ const styles = StyleSheet.create({
   },
   saleHeader: {
     marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  saleHeaderLeft: {
+    flex: 1,
+    marginRight: 8,
+  },
+  estadoBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  estadoLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+    marginRight: 4,
+  },
+  estadoIcon: {
+    width: 24,
+    height: 24,
   },
   saleId: {
     fontSize: 14,
@@ -748,6 +1299,42 @@ const styles = StyleSheet.create({
   detailLabel: {
     fontWeight: '600',
   },
+  // Promo saldo once the 15-day window passed: visibly out of play.
+  detailTextInactive: {
+    color: '#aaa',
+    textDecorationLine: 'line-through',
+  },
+  surchargeText: {
+    color: '#dc3545',
+  },
+  paidBadge: {
+    marginTop: 8,
+    fontSize: 18,
+    fontWeight: 'bold',
+    letterSpacing: 3,
+    color: '#28a745',
+  },
+  receiptPaidStamp: {
+    marginTop: 10,
+    fontSize: 24,
+    fontWeight: 'bold',
+    letterSpacing: 5,
+    textAlign: 'center',
+    color: '#28a745',
+  },
+  enablePpButton: {
+    backgroundColor: '#ffc107',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 16,
+  },
+  enablePpButtonText: {
+    color: '#333',
+    fontWeight: '600',
+  },
   productDetail: {
     marginLeft: 12,
     marginTop: 4,
@@ -755,11 +1342,6 @@ const styles = StyleSheet.create({
     paddingLeft: 8,
     borderLeftWidth: 2,
     borderLeftColor: '#007bff',
-  },
-  actionsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 12,
   },
   paymentButtonsContainer: {
     flexDirection: 'row',
@@ -782,32 +1364,59 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     alignItems: 'center',
   },
-  editButton: {
-    flex: 1,
-    backgroundColor: '#007bff',
-    padding: 12,
-    borderRadius: 6,
-    marginRight: 8,
-    alignItems: 'center',
-  },
-  deleteButton: {
-    flex: 1,
-    backgroundColor: '#dc3545',
-    padding: 12,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
   buttonText: {
     color: '#fff',
     fontWeight: '600',
     fontSize: 14,
   },
-  downloadButton: {
-    backgroundColor: '#6f42c1',
+  downloadRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  whatsappButton: {
+    flex: 1,
+    backgroundColor: '#25D366',
     padding: 12,
     borderRadius: 6,
     alignItems: 'center',
-    marginTop: 12,
+    marginRight: 8,
+  },
+  iconActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  iconActionButton: {
+    padding: 8,
+  },
+  actionIcon: {
+    width: 32,
+    height: 32,
+  },
+  bulkReminderButton: {
+    backgroundColor: '#25D366',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sortButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#007bff',
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+  },
+  sortButtonText: {
+    color: '#007bff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   printButton: {
     backgroundColor: '#fd7e14',
@@ -816,12 +1425,47 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
-  pdfButton: {
-    backgroundColor: '#17a2b8',
-    padding: 12,
-    borderRadius: 6,
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: 90,
+    paddingRight: 16,
+  },
+  statusMenu: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingVertical: 6,
+    minWidth: 200,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  statusMenuItem: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  statusMenuItemActive: {
+    backgroundColor: '#e7f1ff',
+  },
+  statusMenuIcon: {
+    width: 26,
+    height: 26,
+    marginRight: 10,
+  },
+  statusMenuLabel: {
+    fontSize: 15,
+    color: '#333',
+    fontWeight: '500',
+  },
+  statusMenuClear: {
+    fontSize: 14,
+    color: '#007bff',
+    fontWeight: '600',
   },
   receiptContainer: {
     flex: 1,
@@ -901,7 +1545,17 @@ const styles = StyleSheet.create({
   receiptSaveButton: {
     backgroundColor: '#28a745',
     padding: 16,
-    margin: 16,
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  receiptWhatsAppButton: {
+    backgroundColor: '#25D366',
+    padding: 16,
+    marginHorizontal: 16,
+    marginBottom: 16,
     borderRadius: 8,
     alignItems: 'center',
   },

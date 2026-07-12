@@ -1,5 +1,5 @@
 // src/components/SaleModal.tsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,8 @@ import SignatureScreen from 'react-native-signature-canvas';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { buildIncomePayload } from '../utils/Incoms';
 import { matchesAllKeywords } from '../utils/smartSearch';
+import { roundUpToFive, getPaymentInfo } from '../utils/paymentStatus';
+import { openCashDrawer } from '../utils/thermalPrinter';
 import api from '../api';
 
 interface Product {
@@ -49,9 +51,31 @@ interface SaleData {
   saldoPrecioNormal: string;
   plazo: { value: string; unit: string };
   fechaVencimiento: string;
+  paymentFrequency: string;
   agenteDeVentas: string;
   aclaraciones: string;
+  /** '' = normal cash flow; otherwise the reporte-diario payment_type
+      (credit_card / transfer / cash_deposit) so the venta/enganche is NOT
+      counted as cash in the cashier's daily count. */
+  electronicPayment: string;
 }
+
+const ELECTRONIC_PAYMENT_OPTIONS = [
+  { label: 'C/Tarjeta', value: 'credit_card' },
+  { label: 'Transferencia', value: 'transfer' },
+  { label: 'Depósito en efectivo', value: 'cash_deposit' },
+];
+
+const FREQUENCY_OPTIONS = ['Semanal', 'Quincenal', 'Mensual', 'Al terminar'];
+
+// Task-7 quick-fill: the salesperson's branch decides ciudad/estado; the
+// street is always the generic "Domicilio conocido".
+const BRANCH_ADDRESS: Record<string, { ciudad: string; estado: string }> = {
+  aquismon: { ciudad: 'Aquismón', estado: 'San Luis Potosí' },
+  cerroazul: { ciudad: 'Cerro Azul', estado: 'Veracruz' },
+  tepetzintla: { ciudad: 'Tepetzintla', estado: 'Veracruz' },
+  tlacolula: { ciudad: 'Tlacolula', estado: 'Veracruz' },
+};
 
 interface SaleModalProps {
   visible: boolean;
@@ -81,7 +105,7 @@ export default function SaleModal({
 
   const [formData, setFormData] = useState<SaleData>({
     nombre: '',
-    email: '',
+    email: 'default@correo.com',
     phone: '',
     calleYNumero: '',
     ciudad: '',
@@ -107,9 +131,13 @@ export default function SaleModal({
     saldoPrecioNormal: '',
     plazo: { value: '', unit: 'weeks' },
     fechaVencimiento: '',
+    paymentFrequency: '',
     agenteDeVentas: '',
     aclaraciones: '',
+    electronicPayment: '',
   });
+  const [showFrequencyOptions, setShowFrequencyOptions] = useState(false);
+  const [showElectronicPayment, setShowElectronicPayment] = useState(false);
 
   const [availableInventory, setAvailableInventory] = useState<any[]>([]);
   const [searchTerms, setSearchTerms] = useState<string[]>(['']);
@@ -190,7 +218,7 @@ export default function SaleModal({
 
     setFormData({
       nombre: initialData.nombre || '',
-      email: initialData.email || '',
+      email: initialData.email || 'default@correo.com',
       phone: initialData.phone || '',
       calleYNumero: initialData.calleynumero || '',
       ciudad: initialData.ciudad || '',
@@ -219,8 +247,12 @@ export default function SaleModal({
       fechaVencimiento: initialData.fechavencimiento
         ? initialData.fechavencimiento.split('T')[0]
         : '',
+      paymentFrequency: initialData.payment_frequency || '',
       agenteDeVentas: initialData.agentedeventas || '',
       aclaraciones: initialData.aclaraciones || '',
+      // Stored on the transaction row, not the sale — editing starts blank
+      // and only overrides the reporte-diario type if re-selected here.
+      electronicPayment: '',
       products: mappedProducts,
     });
 
@@ -300,6 +332,23 @@ export default function SaleModal({
     }
   };
 
+  const handleFillDefaultAddress = () => {
+    const branchKey = (formData.sucursal || userBranch || '')
+      .toLowerCase()
+      .replace(/\s+/g, '');
+    const address = BRANCH_ADDRESS[branchKey];
+    if (!address) {
+      Alert.alert('Sucursal', 'Selecciona una sucursal primero para llenar el domicilio.');
+      return;
+    }
+    setFormData(prev => ({
+      ...prev,
+      calleYNumero: 'Domicilio conocido',
+      ciudad: address.ciudad,
+      estado: address.estado,
+    }));
+  };
+
   const handlePlazoChange = (field: string, value: string) => {
     setFormData({
       ...formData,
@@ -310,19 +359,18 @@ export default function SaleModal({
     });
   };
 
-  const calculateDueDate = () => {
-    const { fecha, plazo } = formData;
-    if (!fecha || !plazo.value) {
+  const calculateDueDate = useCallback(() => {
+    if (!formData.fecha || !formData.plazo.value) {
       return '';
     }
 
-    const date = new Date(fecha);
+    const date = new Date(formData.fecha);
     if (isNaN(date.getTime())) {
       return '';
     }
 
-    const value = parseInt(plazo.value, 10);
-    switch (plazo.unit) {
+    const value = parseInt(formData.plazo.value, 10);
+    switch (formData.plazo.unit) {
       case 'days':
         date.setDate(date.getDate() + value);
         break;
@@ -338,20 +386,19 @@ export default function SaleModal({
 
     try {
       return date.toISOString().split('T')[0];
-    } catch (err) {
+    } catch {
       return '';
     }
-  };
+  }, [formData.fecha, formData.plazo.value, formData.plazo.unit]);
 
   useEffect(() => {
     const due = calculateDueDate();
-    if (due && due !== formData.fechaVencimiento) {
-      setFormData((prev) => ({
-        ...prev,
-        fechaVencimiento: due,
-      }));
+    if (due) {
+      setFormData((prev) =>
+        prev.fechaVencimiento === due ? prev : { ...prev, fechaVencimiento: due },
+      );
     }
-  }, [formData.fecha, formData.plazo.value, formData.plazo.unit]);
+  }, [calculateDueDate]);
 
   const getUnitPriceForItem = (inventoryItem: any) => {
     const branch = formData.sucursal && formData.sucursal.trim()
@@ -419,13 +466,13 @@ export default function SaleModal({
     setSearchTerms((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const calculateTotalPrice = () => {
+  const calculateTotalPrice = useCallback(() => {
     const sum = formData.products.reduce((total, product) => {
       const val = parseFloat(String(product.totalProductPrice));
       return total + (isNaN(val) ? 0 : val);
     }, 0);
     return sum.toFixed(2);
-  };
+  }, [formData.products]);
 
   useEffect(() => {
     if (isEditing || manualPricing) return;
@@ -441,9 +488,10 @@ export default function SaleModal({
     // Contado has no normal price (it's paid in full); Apartado only tracks
     // the promo price, so its normal price/saldo stay at 0 as well.
     const skipNormalPrice = formaLower === 'contado' || formaLower === 'apartado';
+    // Rounded up to end in 0 or 5, same rule as the installments.
     const calculatedPrecioNormal = skipNormalPrice
       ? 0
-      : (discountedPrice * 1.12).toFixed(2);
+      : roundUpToFive(discountedPrice * 1.12).toFixed(2);
 
     setFormData((prevData) => ({
       ...prevData,
@@ -458,7 +506,7 @@ export default function SaleModal({
         : (Number(calculatedPrecioNormal) - Number(formData.enganche)).toFixed(2),
     }));
   }, [
-    formData.products,
+    calculateTotalPrice,
     formData.discount,
     formData.formaDePago,
     formData.enganche,
@@ -513,6 +561,16 @@ export default function SaleModal({
             const existingTx =
               Array.isArray(txRes.data) && txRes.data.length ? txRes.data[0] : null;
             if (existingTx) {
+              // Editing a sale must not wipe an electronic payment_type that
+              // was set here or in the daily report — keep it unless the
+              // seller re-selected one in this form.
+              const electronicTypes = ['credit_card', 'transfer', 'cash_deposit', 'online'];
+              if (
+                !formData.electronicPayment &&
+                electronicTypes.includes(existingTx.payment_type)
+              ) {
+                incomePayload.payment_type = existingTx.payment_type;
+              }
               await api.put(`/transactions/${existingTx.id}`, incomePayload);
               console.log(`✔️ Updated transaction ${existingTx.id}`);
             } else {
@@ -529,6 +587,9 @@ export default function SaleModal({
       }
 
       setIsSaving(false);
+      // Pop the cash drawer for the cashier (best-effort; skipped silently
+      // when no printer is paired). Never blocks the save.
+      openCashDrawer();
       Alert.alert('Éxito', 'Venta guardada correctamente');
       onSaved(saved);
     } catch (err) {
@@ -627,13 +688,61 @@ export default function SaleModal({
             <Picker
               selectedValue={formData.formaDePago}
               onValueChange={(value) => handleInputChange('formaDePago', value)}
+              itemStyle={styles.pickerItem}
             >
-              <Picker.Item label="Contado" value="Contado" />
-              <Picker.Item label="Apartado" value="Apartado" />
-              <Picker.Item label="Crédito" value="Crédito" />
-              <Picker.Item label="MSI" value="MSI" />
+              <Picker.Item label="Contado" value="Contado" color="#333" />
+              <Picker.Item label="Apartado" value="Apartado" color="#333" />
+              <Picker.Item label="Crédito" value="Crédito" color="#333" />
+              <Picker.Item label="MSI" value="MSI" color="#333" />
             </Picker>
           </View>
+
+          {/* Electronic money (card/transfer/deposit) never goes through the
+              cashier's drawer, so the daily-report row must carry that type
+              instead of the cash "Venta"/"Enganche" defaults. */}
+          <TouchableOpacity
+            style={[
+              styles.electronicButton,
+              showElectronicPayment && styles.electronicButtonActive,
+            ]}
+            onPress={() => {
+              const enabling = !showElectronicPayment;
+              setShowElectronicPayment(enabling);
+              handleInputChange(
+                'electronicPayment',
+                enabling ? ELECTRONIC_PAYMENT_OPTIONS[0].value : '',
+              );
+            }}
+          >
+            <Text
+              style={[
+                styles.electronicButtonText,
+                showElectronicPayment && styles.electronicButtonTextActive,
+              ]}
+            >
+              Pago electrónico{showElectronicPayment ? ' ✓' : ''}
+            </Text>
+          </TouchableOpacity>
+          {showElectronicPayment && (
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={formData.electronicPayment}
+                onValueChange={(value) =>
+                  handleInputChange('electronicPayment', value)
+                }
+                itemStyle={styles.pickerItem}
+              >
+                {ELECTRONIC_PAYMENT_OPTIONS.map((opt) => (
+                  <Picker.Item
+                    key={opt.value}
+                    label={opt.label}
+                    value={opt.value}
+                    color="#333"
+                  />
+                ))}
+              </Picker>
+            </View>
+          )}
 
           <Text style={styles.label}>Sucursal *</Text>
           {userRole === 'admin' || userRole === 'superadmin' ? (
@@ -641,12 +750,13 @@ export default function SaleModal({
               <Picker
                 selectedValue={formData.sucursal}
                 onValueChange={(value) => handleInputChange('sucursal', value)}
+                itemStyle={styles.pickerItem}
               >
-                <Picker.Item label="Seleccione..." value="" />
-                <Picker.Item label="Cerro Azul" value="cerroazul" />
-                <Picker.Item label="Aquismon" value="aquismon" />
-                <Picker.Item label="Tepetzintla" value="tepetzintla" />
-                <Picker.Item label="Tlacolula" value="tlacolula" />
+                <Picker.Item label="Seleccione..." value="" color="#333" />
+                <Picker.Item label="Cerro Azul" value="cerroazul" color="#333" />
+                <Picker.Item label="Aquismon" value="aquismon" color="#333" />
+                <Picker.Item label="Tepetzintla" value="tepetzintla" color="#333" />
+                <Picker.Item label="Tlacolula" value="tlacolula" color="#333" />
               </Picker>
             </View>
           ) : (
@@ -679,6 +789,15 @@ export default function SaleModal({
             onChangeText={(value) => handleInputChange('phone', value)}
             keyboardType="phone-pad"
           />
+
+          <TouchableOpacity
+            style={styles.defaultAddressButton}
+            onPress={handleFillDefaultAddress}
+          >
+            <Text style={styles.defaultAddressButtonText}>
+              Llenar domicilio conocido
+            </Text>
+          </TouchableOpacity>
 
           <Text style={styles.label}>Calle y número *</Text>
           <TextInput
@@ -715,6 +834,7 @@ export default function SaleModal({
                 mode="date"
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={handleDateChange}
+                themeVariant="light"
               />
               {Platform.OS === 'ios' && (
                 <View style={styles.dateButtonsRow}>
@@ -910,10 +1030,11 @@ export default function SaleModal({
               selectedValue={formData.plazo.unit}
               onValueChange={(value) => handlePlazoChange('unit', value)}
               enabled={!isContado}
+              itemStyle={styles.pickerItem}
             >
-              <Picker.Item label="Días" value="days" />
-              <Picker.Item label="Semanas" value="weeks" />
-              <Picker.Item label="Meses" value="months" />
+              <Picker.Item label="Días" value="days" color="#333" />
+              <Picker.Item label="Semanas" value="weeks" color="#333" />
+              <Picker.Item label="Meses" value="months" color="#333" />
             </Picker>
           </View>
 
@@ -923,6 +1044,70 @@ export default function SaleModal({
             value={formData.fechaVencimiento}
             editable={false}
           />
+
+          {/* Collapsed dropdown on purpose (not a Picker wheel): it only
+              expands the 4 options when tapped. */}
+          <Text style={styles.label}>Frecuencia de pago</Text>
+          <TouchableOpacity
+            style={[styles.input, isContado && styles.inputDisabled]}
+            disabled={isContado}
+            onPress={() => setShowFrequencyOptions((prev) => !prev)}
+          >
+            <Text
+              style={
+                formData.paymentFrequency
+                  ? styles.dropdownValueText
+                  : styles.placeholderText
+              }
+            >
+              {formData.paymentFrequency || 'Seleccionar frecuencia'}
+            </Text>
+          </TouchableOpacity>
+          {showFrequencyOptions && !isContado && (
+            <View style={styles.dropdownOptions}>
+              {FREQUENCY_OPTIONS.map((option) => (
+                <TouchableOpacity
+                  key={option}
+                  style={[
+                    styles.dropdownOption,
+                    formData.paymentFrequency === option &&
+                      styles.dropdownOptionSelected,
+                  ]}
+                  onPress={() => {
+                    handleInputChange('paymentFrequency', option);
+                    setShowFrequencyOptions(false);
+                  }}
+                >
+                  <Text style={styles.dropdownOptionText}>{option}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Same installment math the sales list shows, live as the form
+              is filled, so the seller can quote the payment on the spot. */}
+          {!isContado &&
+            formData.paymentFrequency !== '' &&
+            (() => {
+              const info = getPaymentInfo({
+                formadepago: formData.formaDePago,
+                preciopromocion: formData.precioPromocion,
+                enganche: formData.enganche,
+                saldo_precio_promocion: formData.saldoPrecioPromocion,
+                plazo: formData.plazo,
+                payment_frequency: formData.paymentFrequency,
+                fecha: formData.fecha,
+                fechavencimiento: formData.fechaVencimiento,
+              });
+              return info.pagosDe != null ? (
+                <Text style={styles.pagosDeText}>
+                  Pagos de: ${info.pagosDe.toFixed(2)}
+                  {formData.paymentFrequency === 'Al terminar'
+                    ? ' (al terminar el plazo)'
+                    : ''}
+                </Text>
+              ) : null;
+            })()}
 
           <Text style={styles.label}>Agente de ventas *</Text>
           <TextInput
@@ -1006,6 +1191,33 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     color: '#333',
   },
+  electronicButton: {
+    backgroundColor: '#e9ecef',
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  electronicButtonActive: {
+    backgroundColor: '#007bff',
+    borderColor: '#007bff',
+  },
+  electronicButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  electronicButtonTextActive: {
+    color: '#fff',
+  },
+  pagosDeText: {
+    marginTop: 8,
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#007bff',
+  },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
@@ -1023,6 +1235,49 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
     borderRadius: 6,
     overflow: 'hidden',
+  },
+  // Explicit dark text so the iOS wheel stays readable when the phone is in
+  // dark mode (the modal background is always white).
+  pickerItem: {
+    color: '#333',
+    fontSize: 16,
+  },
+  defaultAddressButton: {
+    backgroundColor: '#e7f1ff',
+    borderWidth: 1,
+    borderColor: '#007bff',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  defaultAddressButtonText: {
+    color: '#007bff',
+    fontWeight: '600',
+  },
+  dropdownValueText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  dropdownOptions: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    marginTop: 4,
+    backgroundColor: '#fff',
+    overflow: 'hidden',
+  },
+  dropdownOption: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  dropdownOptionSelected: {
+    backgroundColor: '#e7f1ff',
+  },
+  dropdownOptionText: {
+    fontSize: 16,
+    color: '#333',
   },
   textArea: {
     height: 100,

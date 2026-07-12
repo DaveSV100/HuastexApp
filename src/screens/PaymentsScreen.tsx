@@ -20,6 +20,7 @@ import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 import api from '../api';
 import PrintTicketModal from '../components/PrintTicketModal';
 import ReceiptTicket from '../components/ReceiptTicket';
+import { normalizePhoneMx, shareImageToWhatsApp } from '../utils/whatsapp';
 
 type PaymentsScreenRouteProp = RouteProp<
   { Payments: { saleId: number } },
@@ -39,6 +40,7 @@ interface Payment {
 interface Sale {
   id: number;
   nombre: string;
+  phone?: string;
   products: any[];
 }
 
@@ -56,7 +58,22 @@ export default function PaymentsScreen(): React.JSX.Element {
   // Abono shown in the save-as-image preview modal (null = closed).
   const [downloadPayment, setDownloadPayment] = useState<Payment | null>(null);
   const [isSavingImage, setIsSavingImage] = useState(false);
+  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
   const receiptRef = useRef<any>(null);
+
+  const handleSendPaymentImageWhatsApp = async () => {
+    if (!receiptRef.current) return;
+    setIsSendingWhatsApp(true);
+    try {
+      const uri = await receiptRef.current.capture();
+      await shareImageToWhatsApp(normalizePhoneMx(sale?.phone), uri);
+    } catch (err) {
+      console.error('Error sharing payment image:', err);
+      Alert.alert('Error', 'No se pudo compartir la imagen.');
+    } finally {
+      setIsSendingWhatsApp(false);
+    }
+  };
 
   const handleSavePaymentImage = async () => {
     if (!receiptRef.current) return;
@@ -85,18 +102,12 @@ export default function PaymentsScreen(): React.JSX.Element {
     }
   };
 
-  useEffect(() => {
-    loadRole();
-    fetchPayments();
-    fetchSale();
-  }, []);
-
   const loadRole = async () => {
     const userRole = await AsyncStorage.getItem('role');
     setRole(userRole);
   };
 
-  const fetchPayments = async () => {
+  const fetchPayments = useCallback(async () => {
     setLoading(true);
     try {
       const response = await fetch(`https://api.huastex.com/payments/${saleId}`);
@@ -108,16 +119,22 @@ export default function PaymentsScreen(): React.JSX.Element {
     } finally {
       setLoading(false);
     }
-  };
+  }, [saleId]);
 
-  const fetchSale = async () => {
+  const fetchSale = useCallback(async () => {
     try {
       const resp = await api.get(`/sales/${saleId}`);
       setSale(resp.data || null);
     } catch (err) {
       console.error('Error fetching sale:', err);
     }
-  };
+  }, [saleId]);
+
+  useEffect(() => {
+    loadRole();
+    fetchPayments();
+    fetchSale();
+  }, [fetchPayments, fetchSale]);
 
   const handleDelete = async (payment: Payment) => {
     Alert.alert(
@@ -186,6 +203,15 @@ export default function PaymentsScreen(): React.JSX.Element {
       >
         <Text style={styles.printButtonText}>Descargar Imagen</Text>
       </TouchableOpacity>
+
+      {Boolean(normalizePhoneMx(sale?.phone)) && (
+        <TouchableOpacity
+          style={styles.whatsappButton}
+          onPress={() => setDownloadPayment(item)}
+        >
+          <Text style={styles.printButtonText}>Enviar comprobante</Text>
+        </TouchableOpacity>
+      )}
 
       <TouchableOpacity
         style={styles.printButton}
@@ -286,6 +312,25 @@ export default function PaymentsScreen(): React.JSX.Element {
                 <Text style={styles.saveImageButtonText}>Guardar en galería</Text>
               )}
             </TouchableOpacity>
+
+            {Boolean(normalizePhoneMx(sale?.phone)) && (
+              <TouchableOpacity
+                style={[
+                  styles.whatsappSendButton,
+                  isSendingWhatsApp && styles.saveImageButtonDisabled,
+                ]}
+                onPress={handleSendPaymentImageWhatsApp}
+                disabled={isSendingWhatsApp}
+              >
+                {isSendingWhatsApp ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.saveImageButtonText}>
+                    Enviar por WhatsApp
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         </Modal>
       )}
@@ -377,6 +422,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  whatsappButton: {
+    backgroundColor: '#25D366',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   printButton: {
     backgroundColor: '#fd7e14',
     padding: 12,
@@ -413,7 +465,17 @@ const styles = StyleSheet.create({
   saveImageButton: {
     backgroundColor: '#28a745',
     padding: 16,
-    margin: 16,
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  whatsappSendButton: {
+    backgroundColor: '#25D366',
+    padding: 16,
+    marginHorizontal: 16,
+    marginBottom: 16,
     borderRadius: 8,
     alignItems: 'center',
   },

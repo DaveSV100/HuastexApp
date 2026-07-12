@@ -114,14 +114,18 @@ export default function DocumentTicket({
             </Text>
             {!m.apartado && (
               <Text style={styles.totalLine}>
-                <Text style={styles.bold}>Saldo Precio Normal:</Text>{' '}
+                <Text style={styles.bold}>
+                  Saldo Precio Normal{m.surchargePct ? ' (con interés)' : ''}:
+                </Text>{' '}
                 {m.saldoNormal || '-'}
               </Text>
             )}
-            <Text style={styles.totalLine}>
-              <Text style={styles.bold}>Saldo Precio Promoción:</Text>{' '}
-              {m.saldoPromo || '-'}
-            </Text>
+            {m.promoActive && (
+              <Text style={styles.totalLine}>
+                <Text style={styles.bold}>Saldo Precio Promoción:</Text>{' '}
+                {m.saldoPromo || '-'}
+              </Text>
+            )}
           </>
         ) : (
           <>
@@ -139,18 +143,23 @@ export default function DocumentTicket({
                 </Text>
                 {!m.apartado && (
                   <Text style={styles.totalLine}>
-                    <Text style={styles.bold}>Saldo Precio Normal:</Text>{' '}
+                    <Text style={styles.bold}>
+                      Saldo Precio Normal{m.surchargePct ? ' (con interés)' : ''}:
+                    </Text>{' '}
                     {m.saldoNormal || '-'}
                   </Text>
                 )}
-                <Text style={styles.totalLine}>
-                  <Text style={styles.bold}>Saldo Precio Promoción:</Text>{' '}
-                  {m.saldoPromo || '-'}
-                </Text>
+                {m.promoActive && (
+                  <Text style={styles.totalLine}>
+                    <Text style={styles.bold}>Saldo Precio Promoción:</Text>{' '}
+                    {m.saldoPromo || '-'}
+                  </Text>
+                )}
               </>
             )}
           </>
         )}
+        {m.paid && <Text style={styles.paidStamp}>PAGADO</Text>}
       </View>
 
       <View style={styles.lightRule} />
@@ -324,6 +333,13 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#000',
     marginBottom: 4,
+  },
+  paidStamp: {
+    marginTop: 8,
+    fontSize: 20,
+    fontWeight: 'bold',
+    letterSpacing: 4,
+    color: '#000',
   },
   totalLine: {
     fontSize: 11.5,

@@ -579,9 +579,15 @@ export function buildTicketPdf({
     doc.space(2);
     doc.rightLabelValue('Fecha límite para liquidar:', m.dueDate, 11.5);
     if (!m.apartado) {
-      doc.rightLabelValue('Saldo Precio Normal:', m.saldoNormal || '-', 11.5);
+      doc.rightLabelValue(
+        `Saldo Precio Normal${m.surchargePct ? ' (con interés)' : ''}:`,
+        m.saldoNormal || '-',
+        11.5,
+      );
     }
-    doc.rightLabelValue('Saldo Precio Promoción:', m.saldoPromo || '-', 11.5);
+    if (m.promoActive) {
+      doc.rightLabelValue('Saldo Precio Promoción:', m.saldoPromo || '-', 11.5);
+    }
   } else {
     doc.rightLabelValue('Total:', `$${m.total}`, 15, true);
     doc.space(2);
@@ -591,10 +597,24 @@ export function buildTicketPdf({
     if (m.credit) {
       doc.rightLabelValue('Fecha límite para liquidar:', m.dueDate, 11.5);
       if (!m.apartado) {
-        doc.rightLabelValue('Saldo Precio Normal:', m.saldoNormal || '-', 11.5);
+        doc.rightLabelValue(
+          `Saldo Precio Normal${m.surchargePct ? ' (con interés)' : ''}:`,
+          m.saldoNormal || '-',
+          11.5,
+        );
       }
-      doc.rightLabelValue('Saldo Precio Promoción:', m.saldoPromo || '-', 11.5);
+      if (m.promoActive) {
+        doc.rightLabelValue(
+          'Saldo Precio Promoción:',
+          m.saldoPromo || '-',
+          11.5,
+        );
+      }
     }
+  }
+  if (m.paid) {
+    doc.space(6);
+    doc.centered('PAGADO', 18, { bold: true });
   }
   doc.space(10);
   doc.rule();

@@ -15,6 +15,7 @@ import {
 import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import api from '../api';
+import { openCashDrawer } from '../utils/thermalPrinter';
 
 interface PaymentsModalProps {
   visible: boolean;
@@ -153,6 +154,8 @@ export default function PaymentsModal({
       const txRes = await api.post('/transactions', transactionPayload);
       console.log('✔️ Transaction recorded:', txRes.data);
 
+      // Pop the drawer so the cashier can put the abono away (best-effort).
+      openCashDrawer();
       Alert.alert('Éxito', 'Abono registrado correctamente');
       onPaymentSuccess();
     } catch (error) {
@@ -193,6 +196,7 @@ export default function PaymentsModal({
                   mode="date"
                   display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                   onChange={handleDateChange}
+                  themeVariant="light"
                 />
                 {Platform.OS === 'ios' && (
                   <View style={styles.dateButtonsRow}>
@@ -221,13 +225,14 @@ export default function PaymentsModal({
               <Picker
                 selectedValue={formData.payment_type}
                 onValueChange={(value) => handleInputChange('payment_type', value)}
+                itemStyle={styles.pickerItem}
               >
-                <Picker.Item label="Efectivo" value="deposit" />
-                <Picker.Item label="Liquidó" value="settled" />
-                <Picker.Item label="C/Tarjeta" value="credit_card" />
-                <Picker.Item label="Transferencia" value="transfer" />
-                <Picker.Item label="Online" value="online" />
-                <Picker.Item label="Depósito en efectivo" value="cash_deposit" />
+                <Picker.Item label="Efectivo" value="deposit" color="#333" />
+                <Picker.Item label="Liquidó" value="settled" color="#333" />
+                <Picker.Item label="C/Tarjeta" value="credit_card" color="#333" />
+                <Picker.Item label="Transferencia" value="transfer" color="#333" />
+                <Picker.Item label="Online" value="online" color="#333" />
+                <Picker.Item label="Depósito en efectivo" value="cash_deposit" color="#333" />
               </Picker>
             </View>
 
@@ -320,6 +325,11 @@ const styles = StyleSheet.create({
     borderColor: '#ddd',
     borderRadius: 6,
     overflow: 'hidden',
+  },
+  // Explicit dark text so the iOS wheel stays readable in system dark mode.
+  pickerItem: {
+    color: '#333',
+    fontSize: 16,
   },
   dateButton: {
     borderWidth: 1,

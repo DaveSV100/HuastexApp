@@ -56,6 +56,11 @@ yarn-error.log
 **/fastlane/screenshots
 **/fastlane/test_output
 
+# fastlane secrets — NEVER commit these
+fastlane/.env
+fastlane/*.p8
+fastlane/play-service-account.json
+
 # Bundle artifact
 *.jsbundle
 

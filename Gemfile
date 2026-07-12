@@ -14,3 +14,6 @@ gem 'bigdecimal'
 gem 'logger'
 gem 'benchmark'
 gem 'mutex_m'
+
+# Build + upload automation (App Store / TestFlight + Google Play).
+gem 'fastlane'

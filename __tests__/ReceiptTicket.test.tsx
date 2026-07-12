@@ -16,6 +16,9 @@ const creditSale = {
   saldo_precio_normal: '3315.00',
   saldo_precio_promocion: '2445.00',
   fechavencimiento: '2026-08-25T00:00:00.000Z',
+  // Pins promoActive=true so the assertions don't flip when the wall clock
+  // passes the fixture's due date + 15 days.
+  pp_enabled: true,
   aclaraciones: 'Pagos semanales de $225',
   firmadigital: null,
   products: [

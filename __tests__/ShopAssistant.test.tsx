@@ -1,11 +1,11 @@
-// The shop assistant must only render for signed-in users while the backend
-// reports free quota available, and must remove itself when the daily quota
-// runs out mid-conversation (503 AI_QUOTA_EXHAUSTED).
+// The shop assistant is PUBLIC: it renders for any shopper (signed in or
+// not) while the backend reports free quota available (GET /ai/status),
+// and must remove itself when the daily quota runs out mid-conversation
+// (503 AI_QUOTA_EXHAUSTED).
 import React from 'react';
 import { Alert } from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 import ShopAssistant from '../src/components/ShopAssistant';
-import { AuthContext } from '../src/contexts/AuthContext';
 import api from '../src/api';
 
 jest.mock('../src/api', () => ({
@@ -15,14 +15,10 @@ jest.mock('../src/api', () => ({
 
 const mockedApi = api as jest.Mocked<typeof api>;
 
-async function renderWithUser(user: any) {
+async function renderAssistant() {
   let tree!: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(async () => {
-    tree = ReactTestRenderer.create(
-      <AuthContext.Provider value={{ user, signIn: jest.fn(), signOut: jest.fn() } as any}>
-        <ShopAssistant />
-      </AuthContext.Provider>,
-    );
+    tree = ReactTestRenderer.create(<ShopAssistant />);
   });
   return tree;
 }
@@ -36,22 +32,16 @@ describe('ShopAssistant', () => {
     jest.clearAllMocks();
   });
 
-  it('renders nothing for anonymous shoppers (no status call)', async () => {
-    const tree = await renderWithUser(null);
-    expect(tree.toJSON()).toBeNull();
-    expect(mockedApi.get).not.toHaveBeenCalled();
-  });
-
   it('renders nothing when the backend reports quota exhausted', async () => {
     mockedApi.get.mockResolvedValue({ data: { available: false } });
-    const tree = await renderWithUser({ email: 'c@c.com' });
+    const tree = await renderAssistant();
     expect(mockedApi.get).toHaveBeenCalledWith('/ai/status');
     expect(tree.toJSON()).toBeNull();
   });
 
-  it('shows the button when signed in and quota is available', async () => {
+  it('shows the button to any shopper when quota is available', async () => {
     mockedApi.get.mockResolvedValue({ data: { available: true } });
-    const tree = await renderWithUser({ email: 'c@c.com' });
+    const tree = await renderAssistant();
     expect(findByTestID(tree, 'shop-assistant-fab').length).toBeGreaterThan(0);
   });
 
@@ -62,7 +52,7 @@ describe('ShopAssistant', () => {
       response: { status: 503, data: { code: 'AI_QUOTA_EXHAUSTED' } },
     });
 
-    const tree = await renderWithUser({ email: 'c@c.com' });
+    const tree = await renderAssistant();
     await ReactTestRenderer.act(async () => {
       findByTestID(tree, 'shop-assistant-fab')[0].props.onPress();
     });

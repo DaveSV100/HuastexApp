@@ -141,6 +141,69 @@ export interface DayIncome {
 
 const WEEKDAYS_ES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 
+const MONTHS_ES = [
+  'ene',
+  'feb',
+  'mar',
+  'abr',
+  'may',
+  'jun',
+  'jul',
+  'ago',
+  'sep',
+  'oct',
+  'nov',
+  'dic',
+];
+
+export interface MonthNeto {
+  /** YYYY-MM */
+  month: string;
+  /** Short Spanish month for the axis ("ene", …); adds 'YY when not this year. */
+  label: string;
+  /** income − outcome for that month; can be negative. */
+  total: number;
+}
+
+/**
+ * Neto (ingresos − egresos) per month for the trailing `months` window
+ * ending at `todayIso`'s month (inclusive), oldest first — feeds the
+ * dashboard's month-over-month comparison chart.
+ */
+export function netoLastMonths(
+  transactions: any[],
+  branch: string,
+  todayIso: string,
+  months = 6,
+): MonthNeto[] {
+  const [y, m] = todayIso.split('-').map(Number);
+  const inBranch = (slug: string) => branch === 'all' || slug === branch;
+  const rows = (transactions || []).filter(
+    t => t && inBranch(branchSlug(t.location)),
+  );
+
+  const result: MonthNeto[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const date = new Date(y, m - 1 - i, 1);
+    const year = date.getFullYear();
+    const key = `${year}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const total = rows
+      .filter(t => monthOf(t.transaction_date) === key)
+      .reduce((sum, t) => {
+        const value = Number(t.value) || 0;
+        if (t.transaction_type === 'income') return sum + value;
+        if (t.transaction_type === 'outcome') return sum - value;
+        return sum;
+      }, 0);
+    const label =
+      year === y
+        ? MONTHS_ES[date.getMonth()]
+        : `${MONTHS_ES[date.getMonth()]} '${String(year).slice(-2)}`;
+    result.push({ month: key, label, total });
+  }
+  return result;
+}
+
 /**
  * Income totals per day for the trailing `days` window ending at `todayIso`
  * (inclusive), oldest first — feeds the dashboard's bar chart.

@@ -147,6 +147,27 @@ async function findWritableCharacteristic(
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
+// ESC p 0 25 250 — pulse drawer-kick pin 2 (the RJ11 "phone" cable port on
+// the printer): 50ms on / 500ms off. Standard ESC/POS cash-drawer command.
+const DRAWER_KICK = new Uint8Array([0x1b, 0x70, 0x00, 0x19, 0xfa]);
+
+/**
+ * Pop the cash drawer wired to the paired thermal printer. Best-effort and
+ * silent: no paired printer, Bluetooth off, or printer out of range must
+ * never interrupt the flow that triggered it (saving a sale, opening the
+ * accounting modal, …) — callers fire-and-forget this.
+ */
+export async function openCashDrawer(): Promise<void> {
+  try {
+    const printer = await getSavedPrinter();
+    if (!printer) return;
+    await waitForBluetoothOn(3000);
+    await printEscPos(printer.id, DRAWER_KICK);
+  } catch (err) {
+    console.log('Cash drawer skipped:', (err as any)?.message ?? err);
+  }
+}
+
 /** Connect to the saved/selected printer and stream the ESC/POS bytes. */
 export async function printEscPos(
   printerId: string,

@@ -37,7 +37,11 @@
       "Bash(npx playwright *)",
       "Bash(node -e ' *)",
       "Bash(npm ls *)",
-      "Bash(node -e \"const p=require\\('/Users/davidsaavedravazquez/Documents/HuastexApp/node_modules/react-native-signature-canvas/package.json'\\); console.log\\('peerDeps:', JSON.stringify\\(p.peerDependencies\\)\\)\")"
+      "Bash(node -e \"const p=require\\('/Users/davidsaavedravazquez/Documents/HuastexApp/node_modules/react-native-signature-canvas/package.json'\\); console.log\\('peerDeps:', JSON.stringify\\(p.peerDependencies\\)\\)\")",
+      "Read(//Users/davidsaavedravazquez/Documents/huastex/**)",
+      "Bash(awk '/CREATE TABLE IF NOT EXISTS products/{f=1} f{print} /\\\\\\);/{if\\(f\\){exit}}' db/db.sql)",
+      "Bash(pg_restore -l mydatabase_dump.pgsql)",
+      "Bash(pg_restore -t products --data-only mydatabase_dump.pgsql)"
     ],
     "additionalDirectories": [
       "/tmp",

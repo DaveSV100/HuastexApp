@@ -21,6 +21,7 @@ import api from '../api';
 import {
   computeDashboardStats,
   incomeLastDays,
+  netoLastMonths,
   branchSlug,
   formatMoney,
   compactMoney,
@@ -70,6 +71,43 @@ function ChartBar({ label, total, max }: { label: string; total: number; max: nu
   );
 }
 
+/**
+ * Column for the monthly neto chart. Unlike ChartBar, values can be negative,
+ * so every column carries a positive zone, the zero axis, and (when any month
+ * is negative) a zone below it; zone heights are shared so the axis lines up.
+ */
+function NetoBar({
+  label,
+  total,
+  maxAbs,
+  posZoneH,
+  negZoneH,
+}: {
+  label: string;
+  total: number;
+  maxAbs: number;
+  posZoneH: number;
+  negZoneH: number;
+}) {
+  const h = Math.max(maxAbs > 0 ? (Math.abs(total) / maxAbs) * CHART_MAX_BAR : 0, 2);
+  const negative = total < 0;
+  return (
+    <View style={styles.chartCol}>
+      <Text style={styles.chartValue}>{total !== 0 ? compactMoney(total) : ''}</Text>
+      <View style={[styles.netoZonePos, { height: posZoneH }]}>
+        {!negative && <View style={[styles.chartBar, { height: h }]} />}
+      </View>
+      <View style={styles.netoAxis} />
+      {negZoneH > 0 && (
+        <View style={[styles.netoZoneNeg, { height: negZoneH }]}>
+          {negative && <View style={[styles.chartBar, styles.netoBarNeg, { height: h }]} />}
+        </View>
+      )}
+      <Text style={styles.chartDay}>{label}</Text>
+    </View>
+  );
+}
+
 export default function DashboardScreen(): React.JSX.Element {
   const navigation = useNavigation();
 
@@ -80,8 +118,10 @@ export default function DashboardScreen(): React.JSX.Element {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Same branch pinning as the daily report: staff/iT only see their own.
-  const canPickBranch = role === 'admin' || role === 'superadmin';
+  // Same branch pinning as the daily report: staff/iT only see their own
+  // branch, and only the reduced dashboard (Hoy + 7-day income chart);
+  // admins/superadmins can pick branches and see every section.
+  const isAdmin = role === 'admin' || role === 'superadmin';
 
   useEffect(() => {
     (async () => {
@@ -89,7 +129,9 @@ export default function DashboardScreen(): React.JSX.Element {
       const storedBranch = (await AsyncStorage.getItem('branch')) || '';
       setRole(storedRole);
       if (storedRole === 'staff' || storedRole === 'iT') {
-        setSelectedLocation(branchSlug(storedBranch) || 'aquismon');
+        // No fallback branch: an empty slug matches nothing in
+        // computeDashboardStats, which beats showing another branch's numbers.
+        setSelectedLocation(branchSlug(storedBranch));
       }
     })();
   }, []);
@@ -130,6 +172,21 @@ export default function DashboardScreen(): React.JSX.Element {
   const weekMax = Math.max(...weekIncome.map(d => d.total), 0);
   const branchMax = Math.max(...stats.porSucursal.map(r => r.ingresos), 0);
 
+  const monthlyNeto = netoLastMonths(
+    transactions,
+    selectedLocation,
+    getLocalDateString(),
+  );
+  const netoMaxPos = Math.max(...monthlyNeto.map(mn => mn.total), 0);
+  const netoMaxNeg = Math.max(...monthlyNeto.map(mn => -mn.total), 0);
+  const netoMaxAbs = Math.max(netoMaxPos, netoMaxNeg);
+  // Shared zone heights so the zero axis is one straight line; each zone is
+  // only as tall as its deepest bar (no negatives → no space below the axis).
+  const netoPosZone =
+    netoMaxAbs > 0 ? Math.max((netoMaxPos / netoMaxAbs) * CHART_MAX_BAR, 4) : 12;
+  const netoNegZone =
+    netoMaxNeg > 0 ? Math.max((netoMaxNeg / netoMaxAbs) * CHART_MAX_BAR, 4) : 0;
+
   return (
     <SafeAreaView style={styles.flex}>
       <ScrollView
@@ -149,7 +206,7 @@ export default function DashboardScreen(): React.JSX.Element {
         </TouchableOpacity>
         <Text style={styles.title}>Dashboard</Text>
 
-        {canPickBranch ? (
+        {isAdmin ? (
           <View style={styles.chipsRow}>
             {['all', ...DASHBOARD_BRANCHES].map(loc => (
               <TouchableOpacity
@@ -190,17 +247,21 @@ export default function DashboardScreen(): React.JSX.Element {
               <Card label="Neto" value={formatMoney(stats.netoHoy)} />
             </View>
 
-            <Text style={styles.sectionTitle}>Este mes</Text>
-            <View style={styles.cardsRow}>
-              <Card
-                label="Ventas"
-                value={String(stats.ventasMes.count)}
-                sub={formatMoney(stats.ventasMes.total)}
-              />
-              <Card label="Ingresos" value={formatMoney(stats.ingresosMes)} />
-              <Card label="Egresos" value={formatMoney(stats.egresosMes)} />
-              <Card label="Neto" value={formatMoney(stats.netoMes)} />
-            </View>
+            {isAdmin && (
+              <>
+                <Text style={styles.sectionTitle}>Este mes</Text>
+                <View style={styles.cardsRow}>
+                  <Card
+                    label="Ventas"
+                    value={String(stats.ventasMes.count)}
+                    sub={formatMoney(stats.ventasMes.total)}
+                  />
+                  <Card label="Ingresos" value={formatMoney(stats.ingresosMes)} />
+                  <Card label="Egresos" value={formatMoney(stats.egresosMes)} />
+                  <Card label="Neto" value={formatMoney(stats.netoMes)} />
+                </View>
+              </>
+            )}
 
             <Text style={styles.sectionTitle}>Ingresos últimos 7 días</Text>
             <View style={styles.chartCard}>
@@ -221,16 +282,34 @@ export default function DashboardScreen(): React.JSX.Element {
               )}
             </View>
 
-            <Text style={styles.sectionTitle}>Cartera</Text>
-            <View style={styles.cardsRow}>
-              <Card
-                label="Por cobrar"
-                value={formatMoney(stats.porCobrar.total)}
-                sub={`${stats.porCobrar.count} ventas con saldo`}
-              />
-            </View>
+            {isAdmin && (
+              <>
+                <Text style={styles.sectionTitle}>
+                  Neto por mes (últimos 6 meses)
+                </Text>
+                <View style={styles.chartCard}>
+                  <View style={styles.chartRow}>
+                    {monthlyNeto.map(mn => (
+                      <NetoBar
+                        key={mn.month}
+                        label={mn.label}
+                        total={mn.total}
+                        maxAbs={netoMaxAbs}
+                        posZoneH={netoPosZone}
+                        negZoneH={netoNegZone}
+                      />
+                    ))}
+                  </View>
+                  {netoMaxAbs === 0 && (
+                    <Text style={styles.chartEmpty}>
+                      Sin movimientos en los últimos 6 meses.
+                    </Text>
+                  )}
+                </View>
+              </>
+            )}
 
-            {stats.porSucursal.length > 0 && (
+            {isAdmin && stats.porSucursal.length > 0 && (
               <>
                 <Text style={styles.sectionTitle}>Por sucursal (este mes)</Text>
                 <View style={styles.branchTable}>
@@ -266,6 +345,19 @@ export default function DashboardScreen(): React.JSX.Element {
                       </View>
                     );
                   })}
+                </View>
+              </>
+            )}
+
+            {isAdmin && (
+              <>
+                <Text style={styles.sectionTitle}>Cartera</Text>
+                <View style={styles.cardsRow}>
+                  <Card
+                    label="Por cobrar"
+                    value={formatMoney(stats.porCobrar.total)}
+                    sub={`${stats.porCobrar.count} ventas con saldo`}
+                  />
                 </View>
               </>
             )}
@@ -377,6 +469,24 @@ const styles = StyleSheet.create({
     width: '58%',
     backgroundColor: '#007bff',
     borderRadius: 3,
+  },
+  netoZonePos: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  netoZoneNeg: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  netoAxis: {
+    width: '100%',
+    height: 1,
+    backgroundColor: '#c5ccd4',
+  },
+  netoBarNeg: {
+    backgroundColor: '#dc3545',
   },
   chartValue: {
     fontSize: 9,

@@ -1,3 +1,4 @@
+/* eslint-env jest */
 // Official mock required by @react-native-async-storage in Jest:
 // https://react-native-async-storage.github.io/async-storage/docs/advanced/jest
 jest.mock('@react-native-async-storage/async-storage', () =>
@@ -18,5 +19,17 @@ jest.mock('react-native-signature-canvas', () => {
 });
 jest.mock('react-native-share', () => ({
   __esModule: true,
-  default: { open: jest.fn() },
+  Social: { Whatsapp: 'whatsapp' },
+  default: {
+    open: jest.fn(),
+    shareSingle: jest.fn(),
+    Social: { WHATSAPP: 'whatsapp' },
+  },
 }));
+
+// Official mock: hooks fall back to zero insets when no SafeAreaProvider is
+// mounted, so components using useSafeAreaInsets render in bare Jest trees.
+jest.mock('react-native-safe-area-context', () => {
+  const mock = require('react-native-safe-area-context/jest/mock');
+  return { __esModule: true, ...mock.default, default: mock.default };
+});

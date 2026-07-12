@@ -37,6 +37,9 @@ export default function ReceiptTicket({
     paymentAmount,
     saldoNormal,
     saldoPromo,
+    promoActive,
+    surchargePct,
+    paid,
   } = deriveTicketModel(sale, payment);
 
   const time = formatTime12h();
@@ -106,14 +109,18 @@ export default function ReceiptTicket({
             </Text>
             {!apartado && (
               <Text style={styles.metaText}>
-                <Text style={styles.bold}>Saldo Precio Normal:</Text>{' '}
+                <Text style={styles.bold}>
+                  Saldo Precio Normal{surchargePct ? ' (con interés)' : ''}:
+                </Text>{' '}
                 {saldoNormal}
               </Text>
             )}
-            <Text style={styles.metaText}>
-              <Text style={styles.bold}>Saldo Precio Promoción:</Text>{' '}
-              {saldoPromo}
-            </Text>
+            {promoActive && (
+              <Text style={styles.metaText}>
+                <Text style={styles.bold}>Saldo Precio Promoción:</Text>{' '}
+                {saldoPromo}
+              </Text>
+            )}
           </>
         ) : (
           <>
@@ -133,18 +140,24 @@ export default function ReceiptTicket({
                 </Text>
                 {!apartado && (
                   <Text style={styles.metaText}>
-                    <Text style={styles.bold}>Saldo Precio Normal:</Text>{' '}
+                    <Text style={styles.bold}>
+                      Saldo Precio Normal{surchargePct ? ' (con interés)' : ''}:
+                    </Text>{' '}
                     {saldoNormal}
                   </Text>
                 )}
-                <Text style={styles.metaText}>
-                  <Text style={styles.bold}>Saldo Precio Promo.:</Text>{' '}
-                  {saldoPromo}
-                </Text>
+                {promoActive && (
+                  <Text style={styles.metaText}>
+                    <Text style={styles.bold}>Saldo Precio Promo.:</Text>{' '}
+                    {saldoPromo}
+                  </Text>
+                )}
               </>
             )}
           </>
         )}
+
+        {paid && <Text style={styles.paidStamp}>PAGADO</Text>}
 
         <View style={styles.brSpace} />
         {sale?.agentedeventas ? (
@@ -244,6 +257,15 @@ const styles = StyleSheet.create({
   },
   bold: {
     fontWeight: 'bold',
+  },
+  paidStamp: {
+    marginTop: 8,
+    fontSize: 26,
+    lineHeight: 31,
+    fontWeight: 'bold',
+    letterSpacing: 4,
+    textAlign: 'center',
+    color: '#000',
   },
   dashedLine: {
     height: 0,

@@ -195,9 +195,10 @@ export default function InventoryModal({ visible, onClose, onSave, initialData =
                 enabled={!manualPricing}
                 selectedValue={formData.formula_id ? String(formData.formula_id) : ''}
                 onValueChange={(val) => handleChange('formula_id', val)}
+                itemStyle={styles.pickerItem}
               >
-                <Picker.Item label="-- Select --" value="" />
-                {formulaOptions.map((o) => <Picker.Item key={o.value} label={o.label} value={o.value} />)}
+                <Picker.Item label="-- Select --" value="" color="#333" />
+                {formulaOptions.map((o) => <Picker.Item key={o.value} label={o.label} value={o.value} color="#333" />)}
               </Picker>
             </View>
 
@@ -294,6 +295,8 @@ const styles = StyleSheet.create({
   label: { marginTop: 8, fontWeight: '700' },
   input: { borderWidth: 1, borderColor: '#ccc', padding: 8, borderRadius: 6, marginTop: 6 },
   pickerWrap: { borderWidth: 1, borderColor: '#ccc', borderRadius: 6, marginTop: 6, overflow: 'hidden' },
+  // Explicit dark text so the iOS wheel stays readable in system dark mode.
+  pickerItem: { color: '#333', fontSize: 16 },
   manualBtn: { marginTop: 10, padding: 10, backgroundColor: '#1c60d5', borderRadius: 6, alignItems: 'center' },
   manualBtnActive: { backgroundColor: '#0e3e9a' },
   saveBtn: { marginTop: 12, padding: 12, backgroundColor: '#0070f3', borderRadius: 6, alignItems: 'center' },

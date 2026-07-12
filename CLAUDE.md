@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **See also [`CONTEXT.md`](CONTEXT.md)** — operational knowledge that isn't obvious
+> from the code: production topology, API/casing contracts, deployment & bundle-id
+> constraints, and known gotchas. Read it when onboarding to this project.
+
 ## Commands
 
 ```bash

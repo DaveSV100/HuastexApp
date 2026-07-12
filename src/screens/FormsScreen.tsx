@@ -13,7 +13,7 @@ import { useNavigation } from '@react-navigation/native';
 import api from '../api';
 import FormulaModal from '../components/FormulaModal';
 
-export default function FormsScreen(): JSX.Element {
+export default function FormsScreen(): React.JSX.Element {
   const navigation = useNavigation();
   const [formulas, setFormulas] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -54,9 +54,8 @@ export default function FormsScreen(): JSX.Element {
 
   const handleSave = async (data: any) => {
     try {
-      let response;
       if (data.id) {
-        response = await api.put(`/formulas/${data.id}`, {
+        const response = await api.put(`/formulas/${data.id}`, {
           name: data.name,
           operators: data.operators,
           pc_example: data.initialNumber,
@@ -64,7 +63,7 @@ export default function FormsScreen(): JSX.Element {
         });
         setFormulas((list) => list.map((f) => (f.id === response.data.id ? response.data : f)));
       } else {
-        response = await api.post('/formulas/add', {
+        const response = await api.post('/formulas/add', {
           name: data.name,
           operators: data.operators,
           pc_example: data.initialNumber,

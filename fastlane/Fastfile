@@ -1,0 +1,119 @@
+# fastlane/Fastfile — one-command build + upload for HuastexApp.
+#
+#   bundle exec fastlane ios beta        # build → TestFlight
+#   bundle exec fastlane ios release     # build → App Store (upload only, you submit)
+#   bundle exec fastlane android beta    # build → Play "internal" track
+#   bundle exec fastlane android release # build → Play "production" (as a draft)
+#
+# Auth (never committed — see fastlane/.env.example, loaded automatically):
+#   iOS      ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH   (App Store Connect API key .p8)
+#   Android  PLAY_JSON_KEY_PATH                            (Play service-account JSON)
+#
+# These lanes do NOT bump the version — run `npm run version:*` first (the
+# package.json deploy:* scripts do that for you).
+
+IOS_WORKSPACE = "ios/HuastexApp.xcworkspace".freeze
+IOS_SCHEME    = "HuastexApp".freeze
+ANDROID_AAB   = "android/app/build/outputs/bundle/release/app-release.aab".freeze
+
+# Fail fast with a clear message if a required secret is missing.
+def require_env(*keys)
+  missing = keys.reject { |k| ENV[k] && !ENV[k].empty? }
+  return if missing.empty?
+
+  UI.user_error!(
+    "Missing env var(s): #{missing.join(', ')}. " \
+    "Copy fastlane/.env.example to fastlane/.env and fill them in."
+  )
+end
+
+def asc_api_key
+  require_env("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_PATH")
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_filepath: ENV.fetch("ASC_KEY_PATH"),
+    duration: 1200,
+    in_house: false
+  )
+end
+
+platform :ios do
+  desc "Archive Release and export a store-ready .ipa"
+  private_lane :build_ios do
+    cocoapods(podfile: "ios/Podfile")
+    build_app(
+      workspace: IOS_WORKSPACE,
+      scheme: IOS_SCHEME,
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: "ios/build",
+      output_name: "HuastexApp.ipa",
+      clean: true,
+      xcargs: "-allowProvisioningUpdates"
+    )
+  end
+
+  desc "iOS → TestFlight"
+  lane :beta do
+    key = asc_api_key
+    build_ios
+    upload_to_testflight(
+      api_key: key,
+      skip_waiting_for_build_processing: true
+    )
+  end
+
+  desc "iOS → App Store (uploads the build; submit for review in App Store Connect)"
+  lane :release do
+    key = asc_api_key
+    build_ios
+    upload_to_app_store(
+      api_key: key,
+      submit_for_review: false,
+      automatic_release: false,
+      force: true,            # skip the HTML confirmation prompt
+      skip_metadata: true,    # not managing store metadata via fastlane (yet)
+      skip_screenshots: true,
+      run_precheck_before_submit: false
+    )
+  end
+end
+
+platform :android do
+  desc "Build a Release .aab"
+  private_lane :build_android do
+    gradle(task: "clean", project_dir: "android")
+    gradle(task: "bundle", build_type: "Release", project_dir: "android")
+  end
+
+  desc "Android → Play internal testing track"
+  lane :beta do
+    require_env("PLAY_JSON_KEY_PATH")
+    build_android
+    upload_to_play_store(
+      track: "internal",
+      aab: ANDROID_AAB,
+      json_key: ENV.fetch("PLAY_JSON_KEY_PATH"),
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      release_status: "completed"
+    )
+  end
+
+  desc "Android → Play production track (uploaded as a draft; roll out in Play Console)"
+  lane :release do
+    require_env("PLAY_JSON_KEY_PATH")
+    build_android
+    upload_to_play_store(
+      track: "production",
+      aab: ANDROID_AAB,
+      json_key: ENV.fetch("PLAY_JSON_KEY_PATH"),
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      release_status: "draft"
+    )
+  end
+end

@@ -2,6 +2,11 @@
 // Text formatting for thermal tickets — ported 1:1 from the web's
 // client/src/Utils/ticketPrinter.js so app-printed tickets read identically
 // to the ones the website generates.
+//
+// Promo rule (owner): once the promo window is gone (>15 days past due and
+// not re-enabled via pp_enabled) receipts must NOT show any promo price —
+// the customer only sees the normal price with the late surcharge added.
+import { getPaymentInfo } from './paymentStatus';
 
 /** "2026-06-07T00:00:00.000Z" | "2026-06-07" | Date | epoch → "07-06-2026" */
 export function isoToDDMMYYYY(input: unknown): string {
@@ -98,13 +103,23 @@ export interface TicketModel {
   paymentAmount: string;
   saldoNormal: string;
   saldoPromo: string;
+  /** False once the promo price no longer applies — hide all promo lines. */
+  promoActive: boolean;
+  /** 6% steps already baked into total/saldoNormal when promo is inactive. */
+  surchargePct: number;
+  /** Credit account liquidated (saldo promo ≤ 0) — tickets stamp "PAGADO". */
+  paid: boolean;
 }
 
 /**
  * Field derivation shared by the thermal ticket (ReceiptTicket) and the
  * shareable PDF, so both renderings always show the same values/wording.
  */
-export function deriveTicketModel(sale: any, payment?: any | null): TicketModel {
+export function deriveTicketModel(
+  sale: any,
+  payment?: any | null,
+  now: Date = new Date(),
+): TicketModel {
   const isPayment = Boolean(payment);
 
   const engancheNumber = Number(sale?.enganche ?? 0);
@@ -118,12 +133,43 @@ export function deriveTicketModel(sale: any, payment?: any | null): TicketModel 
     ? String(paymentAmountRaw)
     : paymentAmountNum.toFixed(2);
 
-  const saldoNormal = isPayment
+  let saldoNormal = isPayment
     ? payment?.saldo_precio_normal ?? sale?.saldo_precio_normal ?? ''
     : sale?.saldo_precio_normal ?? '';
   const saldoPromo = isPayment
     ? payment?.saldo_precio_promocion ?? sale?.saldo_precio_promocion ?? ''
     : sale?.saldo_precio_promocion ?? '';
+
+  // Promo window: when it's gone the ticket switches to normal pricing with
+  // the surcharge applied — the total becomes "precio normal + interés" and
+  // every promo line is dropped by the renderers via promoActive.
+  const info = getPaymentInfo(sale, now);
+  const promoActive = info.isCredit ? info.promoActive : true;
+  const surchargePct = promoActive ? 0 : info.surchargePct;
+
+  // "PAGADO" stamp: a credit account is liquidated once the (displayed)
+  // saldo promo is ≤ 0 — for abono tickets that's the payment's own saldo,
+  // so only the receipt that actually settled the account carries the stamp.
+  const saldoPromoNum = Number(saldoPromo);
+  const paid =
+    info.isCredit &&
+    String(saldoPromo).trim() !== '' &&
+    !Number.isNaN(saldoPromoNum) &&
+    saldoPromoNum <= 0;
+  let total = String(
+    sale?.preciopromocion ?? sale?.total_price ?? sale?.total ?? '0.00',
+  );
+  if (!promoActive) {
+    const factor = 1 + surchargePct / 100;
+    const normal = Number(sale?.precionormal);
+    if (!Number.isNaN(normal) && normal > 0) {
+      total = (normal * factor).toFixed(2);
+    }
+    const saldoNormalNum = Number(saldoNormal);
+    if (!Number.isNaN(saldoNormalNum)) {
+      saldoNormal = (saldoNormalNum * factor).toFixed(2);
+    }
+  }
 
   return {
     isPayment,
@@ -139,10 +185,13 @@ export function deriveTicketModel(sale: any, payment?: any | null): TicketModel 
     dueDate:
       isoToDDMMYYYY(sale?.fechavencimiento || payment?.fechavencimiento || '') ||
       '-',
-    total: String(sale?.preciopromocion ?? sale?.total_price ?? sale?.total ?? '0.00'),
+    total,
     formattedEnganche,
     paymentAmount,
     saldoNormal: String(saldoNormal ?? ''),
     saldoPromo: String(saldoPromo ?? ''),
+    promoActive,
+    surchargePct,
+    paid,
   };
 }

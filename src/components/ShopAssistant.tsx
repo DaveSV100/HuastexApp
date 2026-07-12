@@ -1,12 +1,14 @@
 // src/components/ShopAssistant.tsx
 // Floating "Asistente" button + chat modal for the store, backed by the
-// backend's /ai/shop-assistant (Gemini free tier). The button only renders
-// when (a) the user is signed in — the endpoint requires a token, and the
-// 401 interceptor must never fire for anonymous shoppers — and (b) the
-// backend reports quota available (GET /ai/status). When the daily free
-// quota runs out mid-chat the backend answers 503 AI_QUOTA_EXHAUSTED and
-// the assistant hides itself until the next day's status check.
-import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+// backend's /ai/shop-assistant (Gemini free tier). Available to everyone —
+// signed in or not — so any shopper can use it. This relies on
+// /ai/shop-assistant being a PUBLIC route on the backend; if it still
+// required a token, anonymous sends would 401 and the api.js interceptor
+// would bounce the guest to SignIn. The button renders when the backend
+// reports quota available (GET /ai/status). When the daily free quota runs
+// out mid-chat the backend answers 503 AI_QUOTA_EXHAUSTED and the assistant
+// hides itself until the next day's status check.
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -20,7 +22,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { AuthContext } from '../contexts/AuthContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import api from '../api';
 
 interface ChatMsg {
@@ -29,7 +31,6 @@ interface ChatMsg {
 }
 
 export default function ShopAssistant() {
-  const { user } = useContext(AuthContext) as any;
   const [available, setAvailable] = useState(false);
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
@@ -37,6 +38,7 @@ export default function ShopAssistant() {
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
+  const insets = useSafeAreaInsets();
 
   const checkStatus = useCallback(async () => {
     try {
@@ -49,10 +51,8 @@ export default function ShopAssistant() {
   }, []);
 
   useEffect(() => {
-    if (user) {
-      checkStatus();
-    }
-  }, [user, checkStatus]);
+    checkStatus();
+  }, [checkStatus]);
 
   const quotaExhausted = () => {
     setOpen(false);
@@ -92,14 +92,16 @@ export default function ShopAssistant() {
     }
   };
 
-  if (!user || !available) {
+  if (!available) {
     return null;
   }
 
   return (
     <>
       <TouchableOpacity
-        style={styles.fab}
+        // Ride above the Android nav bar / iOS home indicator, same as the
+        // chat input row does.
+        style={[styles.fab, { bottom: 24 + insets.bottom }]}
         onPress={() => {
           setOpen(true);
           checkStatus();
@@ -111,7 +113,7 @@ export default function ShopAssistant() {
 
       <Modal visible={open} animationType="slide" onRequestClose={() => setOpen(false)}>
         <View style={styles.container}>
-          <View style={styles.header}>
+          <View style={[styles.header, { paddingTop: insets.top + 14, paddingBottom: 18 }]}>
             <Text style={styles.headerTitle}>Asistente de compras</Text>
             <TouchableOpacity onPress={() => setOpen(false)}>
               <Text style={styles.closeButton}>Cerrar</Text>
@@ -151,7 +153,7 @@ export default function ShopAssistant() {
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
           >
-            <View style={styles.inputRow}>
+            <View style={[styles.inputRow, { paddingBottom: 24 + insets.bottom }]}>
               <TextInput
                 style={styles.input}
                 placeholder="Escribe qué producto buscas…"
@@ -186,7 +188,8 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 16,
-    bottom: 24,
+    // bottom is set inline: 24 + safe-area inset (Android nav bar / iOS
+    // home indicator would cover a fixed value on edge-to-edge screens).
     backgroundColor: '#1486AC',
     borderRadius: 24,
     paddingVertical: 12,
@@ -210,8 +213,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    paddingTop: 50,
+    paddingHorizontal: 16,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',

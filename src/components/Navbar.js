@@ -74,7 +74,7 @@ const Navbar = (props) => {
           </TouchableOpacity>
           {user && (
             <TouchableOpacity onPress={() => goAndClose('Us')}>
-              <Text style={styles.menuItem}>Nosotros</Text>
+              {/* <Text style={styles.menuItem}>Nosotros</Text> */}
             </TouchableOpacity>
           )}
         </View>

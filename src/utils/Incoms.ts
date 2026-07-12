@@ -23,7 +23,15 @@ export function buildIncomePayload(sale: any) {
   const saldo = isCash ? 0 : saldoNorm;
   const porPagar = isCash ? 0 : saldoPromo;
 
-  const paymentType = isCash ? "sale" : isCredit ? "down_payment" : isCard ? "credit_card" : "deposit";
+  // "Pago electrónico" in the sale form overrides the cash defaults: card /
+  // transfer / deposit money never enters the drawer, so the daily report
+  // must not count it in the cashier's cash.
+  const electronic = (sale.electronicPayment ?? sale.electronic_payment ?? '')
+    .toString()
+    .trim();
+  const paymentType = electronic
+    ? electronic
+    : isCash ? "sale" : isCredit ? "down_payment" : isCard ? "credit_card" : "deposit";
 
   return {
     transaction_type: "income",

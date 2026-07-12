@@ -241,21 +241,30 @@ shipping updates REQUIRES this id in **two** places:
 - Google Play blocks the API for the **very first** aab — upload that one manually in
   Play Console; the API works afterward.
 
-### Publishing state (as of the last deploy session)
-- Build **6** (v2.4.0) uploaded and Apple-processed (`state=VALID`). The only
-  remaining step is **manual** in the ASC website: Apple renamed the "App Store" tab
-  to **"Distribution"**; prepare a version numbered 2.4.0, attach build 6, then
-  Add for Review → Submit. `release:ios` uploads but never submits
-  (`submit_for_review:false`).
+### Publishing state (as of July 12 2026)
+- v2.4.0 (build 6) is **released** on the App Store. ⚠️ Once a version is released,
+  Apple **closes that version train** — uploading another build of the same version
+  fails with `409 Invalid Pre-Release Train`. Always bump (`npm run version:patch`)
+  before a new upload cycle.
+- **v2.4.1 (build 8)** is uploaded and processed on TestFlight (`state=VALID`),
+  containing the July batch (payment plans, WhatsApp, dashboard, thermal printing).
+  The **passkey work landed after build 8** — the next store build (≥ 2.4.2 / 9)
+  is the first to include passkeys; see §9 prerequisites before shipping it.
+- Android: a signed `.aab` (2.4.0, versionCode 7) was built to
+  `android/app/build/outputs/bundle/release/`; Play accepts it (only versionCode
+  must increase), but rebuilding at the current version keeps stores in sync.
 
 ---
 
 ## 8. Local dev environment gotchas
 
-- **iCloud eviction stalls the toolchain.** This repo lives in `~/Documents`
-  (iCloud-synced). When the disk fills, macOS evicts parts of `node_modules`
-  (`dataless` flag, visible via `ls -lO`). Any content read of a dataless file blocks
-  in `pread` forever if sync is wedged → **jest/tsc/eslint hang at ~0 CPU**.
+- **iCloud eviction stalls the toolchain.** This repo was MOVED to `~/dev/HuastexApp`
+  (July 10 2026) to escape this, but the **web/server repo still lives in
+  `~/Documents/huastex`** (iCloud-synced) and keeps getting hit: macOS evicts files
+  (`dataless` flag, visible via `ls -lO`), and any read of a dataless file blocks
+  forever → **node/jest/tsc/vite/git hang at ~0 CPU**. iCloud has also silently
+  deleted packages (`dotenv`) and recreated junk `"name 2"` duplicate files/refs
+  even after a fresh `npm install`.
   - If the toolchain hangs at 0 CPU, check `ls -lO` for `dataless` BEFORE debugging
     code. Don't chase watchman/jest theories.
   - Workaround: copy pure-TS sources + tests to `/tmp` and run there. Real fixes
@@ -266,3 +275,125 @@ shipping updates REQUIRES this id in **two** places:
 - **Android emulator** (`Medium_Phone_API_36.1`) only boots with
   `-gpu swiftshader_indirect`; the default Guest Angle GPU path is unstable for API
   >35 and leaves adb offline.
+
+---
+
+## 9. Security release (July 12 2026): storefront gate + passkeys — DEPLOYED
+
+Two features designed, built and deployed across the whole stack. Server side is
+**live in production**; remaining rollout steps are listed at the end.
+
+### 9.1 What is live on the server (api.huastex.com)
+
+- **Storefront gate** on `POST /sales/add` (`server/middleware/storefrontGate.js`
+  in the Huastex repo): requests with a valid back-office token
+  (admin/staff/superadmin/iT) behave exactly as before; anonymous requests may
+  only create online-store checkout orders (formaDePago Contado, sucursal
+  `website`/empty, status `por entregar`, no plazo/enganche/agenteDeVentas).
+  Controlled by env `STOREFRONT_GATE`:
+  - `watch` (**current prod setting**): blocks nothing, logs
+    `[storefrontGate:watch] would reject …` for each request enforcement would
+    deny. Review with `pm2 logs server | grep storefrontGate:watch`.
+  - `enforce`: anonymous non-checkout requests get 403.
+  - **Flip to enforce** only after days of clean watch logs:
+    edit `.env`, then `pm2 restart server --update-env`.
+- **Passkey (WebAuthn) endpoints** under `/auth/passkey/*`:
+  `register/options|verify` (JWT required), `login/options|verify` (public,
+  email optional — without email = discoverable credential), `credentials`
+  (GET list / DELETE one). Library: `@simplewebauthn/server@10` — **pinned to
+  v10 because prod is Node 18** (v11+ needs Node 20). Passkey login returns the
+  same `{token, token_exp}` session as password login plus role/name/email/branch.
+- **DB**: one new table `webauthn_credentials` (additive; migration in
+  `server/migrations/002_webauthn.sql`). PG is a DO **managed cluster** (not on
+  the droplet) — connect using the `DB_*` values from `server/.env` with
+  `sslmode=require`.
+- **Node 18 gotcha (was a prod incident)**: `@simplewebauthn/server@10` needs
+  `globalThis.crypto`, absent on Node 18 → `MissingWebCrypto` 500s. Fixed with a
+  guarded polyfill at the very top of `server.js`:
+  `if (!globalThis.crypto) globalThis.crypto = require('node:crypto').webcrypto;`
+  Keep that line if server.js is ever refactored (no-op on Node 20+).
+- New prod `.env` keys: `RP_ID=huastex.com`, `RP_NAME=Huastex`,
+  `STOREFRONT_GATE=watch`, `WEBAUTHN_ORIGINS=https://www.huastex.com,
+  https://huastex.com,android:apk-key-hash:NUiyXOP9-rc40hjW-rcLPjoB979BO2OPndyaG5QV70A`.
+- Passkey challenges are stored **in-memory** (5-min TTL) — fine for the single
+  pm2 fork; if pm2 cluster mode is ever enabled, move them to Redis/DB.
+
+### 9.2 Web client (Huastex repo `client/`)
+
+- `src/Utils/passkey.js` (note capital-U `Utils`): login/register/list/delete
+  helpers via `@simplewebauthn/browser@10`. `isPasskeySupported()` requires an
+  http(s) origin — this is what makes the **Electron desktop app** (which loads
+  `dist/index.html` over `file://`, see `client/electron.mjs`) hide the passkey
+  button: **WebAuthn cannot work from file:// by spec**; desktop keeps password
+  login. Verified by driving the real Electron app over CDP.
+- Login page (`src/Components/Login/index.jsx`): "🔑 Iniciar con passkey" button
+  (uses the email field if filled, else browser offers saved passkeys).
+- `/my-account` (`src/pages/MyAccount/index.jsx`): add / list / delete passkeys.
+- To test Electron from a CLI/agent context: **strip `ELECTRON_RUN_AS_NODE` from
+  the env** before spawning electron, or it crashes importing 'electron'.
+
+### 9.3 Mobile app (this repo)
+
+Commit `39773a3`: `react-native-passkey@3.5`, `src/utils/passkey.ts`,
+`AuthContext.signInWithPasskey` (same persisted session as `signIn`), passkey
+button in `SignInScreen`, add/list/delete UI in `UserScreen`,
+`ios/HuastexApp/HuastexApp.entitlements` (`webcredentials:huastex.com` + www)
+wired via `CODE_SIGN_ENTITLEMENTS` in the pbxproj.
+
+**Before the app-store build that ships passkeys:**
+1. Apple Developer portal → Identifiers → `org.reactjs.native.example.HuastexApp`
+   → enable **Associated Domains** (signing fails without it).
+2. `.well-known` files must be live on the ROOT domain (below).
+3. Play: get the **App signing key** SHA-256 (Play Console → Setup → App
+   Integrity), add to `assetlinks.json` AND as `android:apk-key-hash:<base64url>`
+   in `WEBAUTHN_ORIGINS` — Google re-signs store builds, so the upload-key hash
+   alone only works for local debug builds.
+
+### 9.4 .well-known domain association (mobile passkeys only; web needs none)
+
+`server/public/.well-known/apple-app-site-association` + `assetlinks.json`
+(served by the API at `/.well-known/...`) must be reachable at
+`https://huastex.com/.well-known/...` — the **RP_ID root domain, NOT
+api.huastex.com**. Copy to the website's document root or add an nginx proxy
+location. Content-Type `application/json`; AASA has no file extension.
+
+### 9.5 Test/verification environment
+
+- `~/dev/huastex-lab/` — full local sandbox (app + client + server + Postgres 16
+  DB `huastex_lab`, user/pass `postgres`/`postgres`) with schema **aligned to the
+  real prod dump**. See its README.md. Test login: `lab@huastex.test` /
+  `LabTest123!` (superadmin).
+- Passkey E2E without a device: Chrome/Playwright **CDP virtual authenticator**
+  (`WebAuthn.addVirtualAuthenticator`) — a script exists in the session
+  scratchpad pattern; recreate from README notes if needed.
+- Android emulator reaches a local server via `http://10.0.2.2:<port>`; RN debug
+  builds only load JS reliably with **Metro on default port 8081** and
+  `adb reverse tcp:8081 tcp:8081` (port-remapped reverses fall back to
+  "Unable to load script").
+
+### 9.6 Huastex repo (web/server) facts a new session must know
+
+- Repo: `github.com/DaveSV100/Huastex` (**private**). Branches: work on `main`,
+  deploys track **`production`** (merge main → production → push; the DO box
+  pulls `production`). Box: `/var/www/Huastex`, pm2 process name `server`,
+  Node v18.19.1, 512MB droplet (watch for OOM on big npm installs).
+- `server/node_modules` was historically committed; **untracked July 12**
+  (`git rm -r --cached`), so `git add .` is now gitignore-safe there.
+- Full deploy runbook: `DEPLOY_PASSKEYS_AND_GATE.md` at that repo's root.
+
+### 9.7 Remaining rollout + suggested work (in rough priority order)
+
+1. **Publish the web client** (`client/`: `npm install && npm run build`, publish
+   `dist/`) — this is what makes the passkey button visible to web users.
+2. **Watch → enforce**: after days of clean `storefrontGate:watch` logs, set
+   `STOREFRONT_GATE=enforce` on the box and restart.
+3. `.well-known` on the root domain (9.4), Apple portal capability, Play signing
+   cert (9.3) — then ship the app as **≥ 2.4.2 (build ≥ 9)**.
+4. **Security cleanup in the Huastex repo**: `github-recovery-codes.txt` and
+   `mydatabase_dump.pgsql` (has password hashes) are tracked in git — remove
+   them (and ideally scrub history); ~186 Dependabot alerts pending.
+5. **Move `~/Documents/huastex` out of iCloud** to `~/dev` (same transplant as
+   this repo) — iCloud repeatedly corrupts its node_modules and .git.
+6. Server-side branch scoping for staff (currently client-side only); rate
+   limiting on `/sales/add` and `/auth/passkey/login`; prune the dead
+   `test-*.jsx` copies in `client/src` that still raw-fetch `/sales/add`.

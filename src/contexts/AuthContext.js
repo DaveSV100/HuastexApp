@@ -77,13 +77,37 @@ export function AuthProvider({ children }) {
     }
   };
 
+  // Passkey login — same persisted session shape as signIn.
+  const signInWithPasskey = async (email) => {
+    const { passkeyLogin } = require('../utils/passkey');
+    const result = await passkeyLogin(email || undefined);
+
+    const { token, token_exp } = result;
+    if (!token) throw new Error('No token in response');
+    const decoded = parseJwt(token);
+    if (!decoded) throw new Error('Invalid token received');
+
+    const userEmail = result.email || '';
+    await AsyncStorage.multiSet([
+      ['token',     token],
+      ['token_exp', token_exp.toString()],
+      ['role',      decoded.role],
+      ['branch',    decoded.branch ?? ''],
+      ['userEmail', userEmail],
+    ]);
+
+    const newUser = { name: decoded.name, email: userEmail, role: decoded.role, branch: decoded.branch };
+    setUser(newUser);
+    return newUser;
+  };
+
   const signOut = async () => {
     await AsyncStorage.multiRemove(['token','token_exp','role','branch','userEmail']);
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, signIn, signInWithPasskey, signOut }}>
       {children}
     </AuthContext.Provider>
   );

@@ -4,12 +4,29 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert
 } from 'react-native';
 import { AuthContext } from '../../contexts/AuthContext';
+import { isPasskeySupported, isPasskeyCancelledError } from '../../utils/passkey';
 
 export default function SignInScreen({ navigation, route }) {
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
   const [error,    setError]    = useState('');
-  const { signIn } = useContext(AuthContext);
+  const { signIn, signInWithPasskey } = useContext(AuthContext);
+
+  const handlePasskey = async () => {
+    setError('');
+    try {
+      await signInWithPasskey(email || undefined);
+    } catch (err) {
+      if (isPasskeyCancelledError(err)) {
+        setError('Inicio con passkey cancelado.');
+      } else if (err.response?.status === 401) {
+        setError('No se reconoció la passkey. Usa tu contraseña.');
+      } else {
+        setError('No se pudo iniciar con passkey. Usa tu contraseña.');
+        console.error('Passkey signIn error:', err);
+      }
+    }
+  };
 
   const handleSubmit = async () => {
     try {
@@ -53,6 +70,11 @@ export default function SignInScreen({ navigation, route }) {
       <TouchableOpacity style={styles.signinButton} onPress={handleSubmit}>
         <Text style={styles.buttonText}>Iniciar sesión</Text>
       </TouchableOpacity>
+      {isPasskeySupported() && (
+        <TouchableOpacity style={styles.passkeyButton} onPress={handlePasskey}>
+          <Text style={styles.buttonText}>🔑 Iniciar con passkey</Text>
+        </TouchableOpacity>
+      )}
       <TouchableOpacity
         style={styles.signupButton}
         onPress={() => navigation.navigate('SignUp')}>
@@ -81,6 +103,10 @@ const styles = StyleSheet.create({
   },
   signupButton: {
     backgroundColor:'rgb(116,131,143)', paddingVertical:14,
+    borderRadius:4, width:'100%', alignItems:'center', marginTop:8
+  },
+  passkeyButton: {
+    backgroundColor:'rgb(76,110,90)', paddingVertical:14,
     borderRadius:4, width:'100%', alignItems:'center', marginTop:8
   },
   shopButton: {

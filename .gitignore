@@ -81,3 +81,6 @@ fastlane/play-service-account.json
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Local DB schema snapshot (contains schema; keep out of git)
+copy_of_db.sql

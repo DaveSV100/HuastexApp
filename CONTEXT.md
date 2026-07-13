@@ -15,8 +15,8 @@ There are **three** codebases that make up the Huastex product:
 | Piece | Location | Notes |
 |---|---|---|
 | **Mobile app** (this repo) | `HuastexApp` | React Native 0.83 / React 19, TypeScript. B2B back-office + public storefront. |
-| **Web client** | `~/Documents/huastex/client` (separate repo, Vercel) | React web store + the **payment page** (`/card-payment`). |
-| **Backend / API** | `~/Documents/huastex/server` (locally accessible) | Express on port 4000. Deployed to DigitalOcean. |
+| **Web client** | `~/dev/huastex/client` (separate repo, Vercel) | React web store + the **payment page** (`/card-payment`). |
+| **Backend / API** | `~/dev/huastex/server` (locally accessible) | Express on port 4000. Deployed to DigitalOcean. |
 
 **Critical fact:** the mobile app talks to **production `https://api.huastex.com`**
 (`API_BASE` in `src/api.js`), **NOT** the local `huastex/server` (which listens on
@@ -260,7 +260,7 @@ shipping updates REQUIRES this id in **two** places:
 
 - **iCloud eviction stalls the toolchain.** This repo was MOVED to `~/dev/HuastexApp`
   (July 10 2026) to escape this, but the **web/server repo still lives in
-  `~/Documents/huastex`** (iCloud-synced) and keeps getting hit: macOS evicts files
+  `~/dev/huastex`** (iCloud-synced) and keeps getting hit: macOS evicts files
   (`dataless` flag, visible via `ls -lO`), and any read of a dataless file blocks
   forever → **node/jest/tsc/vite/git hang at ~0 CPU**. iCloud has also silently
   deleted packages (`dotenv`) and recreated junk `"name 2"` duplicate files/refs
@@ -392,7 +392,7 @@ location. Content-Type `application/json`; AASA has no file extension.
 4. **Security cleanup in the Huastex repo**: `github-recovery-codes.txt` and
    `mydatabase_dump.pgsql` (has password hashes) are tracked in git — remove
    them (and ideally scrub history); ~186 Dependabot alerts pending.
-5. **Move `~/Documents/huastex` out of iCloud** to `~/dev` (same transplant as
+5. **Move `~/dev/huastex` out of iCloud** to `~/dev` (same transplant as
    this repo) — iCloud repeatedly corrupts its node_modules and .git.
 6. Server-side branch scoping for staff (currently client-side only); rate
    limiting on `/sales/add` and `/auth/passkey/login`; prune the dead
@@ -423,7 +423,7 @@ preguntar en este dispositivo"), gated on `hasPlatformAuthenticator()`
 into the app. Return visits use the existing "Iniciar con passkey" button
 (discoverable, works because server registration uses `residentKey:'required'`).
 
-**Files changed this round (all in `~/Documents/huastex/client/src`, UNCOMMITTED):**
+**Files changed this round (all in `~/dev/huastex/client/src`, UNCOMMITTED):**
 - `Utils/passkey.js` — `defaultDeviceName()`, `hasPlatformAuthenticator()`,
   `registerPasskey()` auto-names (no prompt).
 - `Components/Login/index.jsx` + `Components/Login/styles.scss` — post-login
@@ -443,7 +443,7 @@ servers / stuck build (redundant) die. To deploy the round-2 UX fixes:
 
 ```bash
 # 1) Commit + push the 5 client files (git add . is safe; node_modules untracked)
-cd ~/Documents/huastex
+cd ~/dev/huastex
 git add .
 git status          # expect ~5 client files (Utils/passkey.js, Login+User jsx/scss)
 git commit -m "passkey UX: post-login enrollment offer, prompt-free creation, scoped styles"
@@ -453,11 +453,22 @@ git checkout production && git merge main && git push origin production && git c
 # 2) Publish the web client
 #    - If Vercel builds from the repo: the push above is enough.
 #    - If you build locally and iCloud makes it hang, the fastest clean build is:
-cd ~/Documents/huastex/client && rm -rf node_modules && npm install && npm run build
+cd ~/dev/huastex/client && rm -rf node_modules && npm install && npm run build
 #    then publish dist/.  (Server + DB unchanged this round.)
 ```
 
-If the local `vite build` in `~/Documents/huastex/client` hangs at 0% CPU, it's
+If the local `vite build` in `~/dev/huastex/client` hangs at 0% CPU, it's
 iCloud eviction (see §8/§9.7-5) — `rm -rf node_modules && npm install` fixes it.
 The lab copy at `~/dev/huastex-lab/client` builds instantly if you need a sanity
 check of the same code.
+
+### 9.10 Web/server repo MOVED out of iCloud (July 12 2026)
+
+The Huastex web+server repo was moved from `~/Documents/huastex` (iCloud, which
+kept corrupting node_modules/.git and made `vite build` take ~89 min) to
+**`~/dev/huastex`** via a fresh GitHub clone + transplant of the gitignored data
+(`server/.env`, `client/.env`, `server/uploads/`, `.claude/`). Verified: git
+fsck clean, both branches (`main`/`production`) at the deployed commit, server
+boots, `vite build` now ~3.4s. The old copy is renamed
+`~/Documents/huastex-OLD-ICLOUD-BORRAR` (user deletes when ready). Work in
+`~/dev/huastex` from now on; the DO box is unaffected (it pulls from GitHub).

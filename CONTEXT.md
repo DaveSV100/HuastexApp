@@ -397,3 +397,67 @@ location. Content-Type `application/json`; AASA has no file extension.
 6. Server-side branch scoping for staff (currently client-side only); rate
    limiting on `/sales/add` and `/auth/passkey/login`; prune the dead
    `test-*.jsx` copies in `client/src` that still raw-fetch `/sales/add`.
+
+### 9.8 Passkey UX round 2 (July 12 2026) — CODE DONE, DEPLOY PENDING
+
+After the first passkey deploy, real-device testing surfaced two problems, both
+now fixed **in the Huastex repo working tree (client only, not yet committed)**:
+
+1. **"Creación de passkey cancelada" on every attempt.** Root cause: a
+   `window.prompt()` asking for a device name. A blocking prompt/alert/confirm
+   **consumes the browser user-activation** that `navigator.credentials.create()`
+   requires, so iOS Safari rejected creation with `NotAllowedError`.
+   **Rule going forward:** call `registerPasskey()` DIRECTLY from the click
+   handler — never a prompt/alert/confirm before a WebAuthn create/get. The
+   device name is now auto-derived from the user agent (`defaultDeviceName()`).
+2. **UI looked foreign** (inline styles + a green button). Now all passkey UI
+   uses **scoped SCSS classes** in the page's own stylesheet, matching the
+   existing `rgb(122,149,172)` / `rgb(98,124,141)` palette. Never use inline
+   styles or off-palette colors here.
+
+New Microsoft-style flow (implemented): after a password login, `Login`
+shows a `.passkey-offer` screen ("Crear passkey" / "Ahora no" / "No volver a
+preguntar en este dispositivo"), gated on `hasPlatformAuthenticator()`
+(`isUserVerifyingPlatformAuthenticatorAvailable`) and a `localStorage`
+`hidePasskeyOffer=1` flag so it's shown once per device. One tap → biometric →
+into the app. Return visits use the existing "Iniciar con passkey" button
+(discoverable, works because server registration uses `residentKey:'required'`).
+
+**Files changed this round (all in `~/Documents/huastex/client/src`, UNCOMMITTED):**
+- `Utils/passkey.js` — `defaultDeviceName()`, `hasPlatformAuthenticator()`,
+  `registerPasskey()` auto-names (no prompt).
+- `Components/Login/index.jsx` + `Components/Login/styles.scss` — post-login
+  offer screen + palette-matched passkey button.
+- `pages/User/index.jsx` + `pages/User/styles.scss` — enrollment section now
+  class-based (no prompt, no inline styles).
+
+Verified via CDP virtual-authenticator E2E (offer→create with zero prompts→
+discoverable credential→logout→passwordless login→"Ahora no" path) and iPhone-
+size design screenshots. Lab `vite build` compiles in ~3.6s. **This round needs
+NO server change and NO pm2 restart — web client only.**
+
+### 9.9 AFTER-RESTART RUNBOOK (do this to ship round 2)
+
+Nothing critical is lost on restart — all edits are saved files; only the lab
+servers / stuck build (redundant) die. To deploy the round-2 UX fixes:
+
+```bash
+# 1) Commit + push the 5 client files (git add . is safe; node_modules untracked)
+cd ~/Documents/huastex
+git add .
+git status          # expect ~5 client files (Utils/passkey.js, Login+User jsx/scss)
+git commit -m "passkey UX: post-login enrollment offer, prompt-free creation, scoped styles"
+git push origin main
+git checkout production && git merge main && git push origin production && git checkout main
+
+# 2) Publish the web client
+#    - If Vercel builds from the repo: the push above is enough.
+#    - If you build locally and iCloud makes it hang, the fastest clean build is:
+cd ~/Documents/huastex/client && rm -rf node_modules && npm install && npm run build
+#    then publish dist/.  (Server + DB unchanged this round.)
+```
+
+If the local `vite build` in `~/Documents/huastex/client` hangs at 0% CPU, it's
+iCloud eviction (see §8/§9.7-5) — `rm -rf node_modules && npm install` fixes it.
+The lab copy at `~/dev/huastex-lab/client` builds instantly if you need a sanity
+check of the same code.

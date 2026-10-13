@@ -16,12 +16,26 @@ import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import api from '../api';
 import { openCashDrawer } from '../utils/thermalPrinter';
+import CambioCalculator from './CambioCalculator';
+import { getCambio } from '../utils/cambio';
+
+// Money that never goes through the cashier's drawer.
+const ELECTRONIC_TYPES = ['credit_card', 'transfer', 'online', 'cash_deposit'];
+// Methods paid in cash at the counter, where "Paga con / Cambio" applies.
+const CASH_TYPES = ['deposit', 'settled'];
+
+/** What the cashier typed in "Paga con" (screen only, never saved). */
+export interface CashChange {
+  pagaCon: number;
+  cambio: number;
+}
 
 interface PaymentsModalProps {
   visible: boolean;
   sale: any;
   onClose: () => void;
-  onPaymentSuccess: () => void;
+  /** Called with the new payment row as returned by POST /payments/add. */
+  onPaymentSuccess: (payment: any, cash: CashChange | null) => void;
 }
 
 export default function PaymentsModal({
@@ -39,6 +53,9 @@ export default function PaymentsModal({
     cajero: '',
     payment_type: 'deposit',
   });
+  // Kept out of formData so it's never sent to the server.
+  const [pagaCon, setPagaCon] = useState('');
+  const isCashMethod = CASH_TYPES.includes(formData.payment_type);
 
   const handleInputChange = (field: string, value: string) => {
     setFormData({
@@ -154,10 +171,21 @@ export default function PaymentsModal({
       const txRes = await api.post('/transactions', transactionPayload);
       console.log('✔️ Transaction recorded:', txRes.data);
 
-      // Pop the drawer so the cashier can put the abono away (best-effort).
-      openCashDrawer();
-      Alert.alert('Éxito', 'Abono registrado correctamente');
-      onPaymentSuccess();
+      // Pop the drawer so the cashier can put the abono away (best-effort) —
+      // not for card/transfer/deposit money, which never enters the drawer.
+      if (!ELECTRONIC_TYPES.includes(formData.payment_type)) {
+        openCashDrawer();
+      }
+      const change = isCashMethod
+        ? getCambio(Number(formData.cantidad), parseFloat(pagaCon))
+        : null;
+      // The caller shows the confirmation with print/send buttons.
+      onPaymentSuccess(
+        { ...paymentResult, payment_type: formData.payment_type },
+        change && change.faltan === 0
+          ? { pagaCon: parseFloat(pagaCon), cambio: change.cambio }
+          : null,
+      );
     } catch (error) {
       console.error('Error registering payment:', error);
       Alert.alert('Error', 'No se pudo registrar el abono');
@@ -235,6 +263,14 @@ export default function PaymentsModal({
                 <Picker.Item label="Depósito en efectivo" value="cash_deposit" color="#333" />
               </Picker>
             </View>
+
+            {isCashMethod && (
+              <CambioCalculator
+                amount={Number(formData.cantidad) || 0}
+                pagaCon={pagaCon}
+                onChangePagaCon={setPagaCon}
+              />
+            )}
 
             <Text style={styles.label}>Cajero *</Text>
             <TextInput

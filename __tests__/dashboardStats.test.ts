@@ -7,6 +7,13 @@ import {
   compactMoney,
   incomeLastDays,
   netoLastMonths,
+  incomeLastMonths,
+  monthWindowKeys,
+  expensesWindow,
+  shiftMonthKey,
+  monthKeyOf,
+  monthTitle,
+  DASHBOARD_BRANCHES,
 } from '../src/utils/dashboardStats';
 
 const TODAY = '2026-06-11';
@@ -223,5 +230,162 @@ describe('netoLastMonths', () => {
     const result = netoLastMonths(undefined as any, 'all', TODAY, 3);
     expect(result).toHaveLength(3);
     expect(result.every(r => r.total === 0)).toBe(true);
+  });
+});
+
+// The month picker: every month-level section is anchored to a chosen
+// YYYY-MM instead of "now", so a figure from a year back is readable without
+// the "Hoy"/7-day sections leaving today.
+describe('month anchoring', () => {
+  describe('monthWindowKeys', () => {
+    it('returns the count months ending at the anchor, oldest first', () => {
+      expect(monthWindowKeys('2025-09', 6)).toEqual([
+        '2025-04',
+        '2025-05',
+        '2025-06',
+        '2025-07',
+        '2025-08',
+        '2025-09',
+      ]);
+    });
+
+    it('crosses the year boundary backwards', () => {
+      expect(monthWindowKeys('2026-02', 4)).toEqual([
+        '2025-11',
+        '2025-12',
+        '2026-01',
+        '2026-02',
+      ]);
+    });
+  });
+
+  describe('shiftMonthKey', () => {
+    it('steps across year boundaries in both directions', () => {
+      expect(shiftMonthKey('2026-01', -1)).toBe('2025-12');
+      expect(shiftMonthKey('2025-12', 1)).toBe('2026-01');
+      expect(shiftMonthKey('2026-09', -12)).toBe('2025-09');
+    });
+  });
+
+  it('monthKeyOf reads local time, not UTC', () => {
+    // 1 Jan 00:30 local is still 2026-01 even where UTC has rolled back a day.
+    expect(monthKeyOf(new Date(2026, 0, 1, 0, 30))).toBe('2026-01');
+    expect(monthKeyOf(new Date(2025, 8, 15))).toBe('2025-09');
+  });
+
+  it('monthTitle spells the month out for the picker', () => {
+    expect(monthTitle('2025-09')).toBe('Septiembre 2025');
+  });
+
+  describe('computeDashboardStats with an explicit monthKey', () => {
+    it('moves the month figures while leaving today alone', () => {
+      const stats = computeDashboardStats(
+        sales,
+        transactions,
+        'all',
+        TODAY,
+        DASHBOARD_BRANCHES,
+        '2026-05',
+      );
+      // Sale 3 is the only May row; today's numbers still come from TODAY.
+      expect(stats.ventasMes.count).toBe(1);
+      expect(stats.ventasMes.total).toBe(1000);
+      expect(stats.ventasHoy.count).toBe(1);
+    });
+
+    it('defaults to todayIso month when omitted', () => {
+      const withKey = computeDashboardStats(
+        sales,
+        transactions,
+        'all',
+        TODAY,
+        DASHBOARD_BRANCHES,
+        '2026-06',
+      );
+      const without = computeDashboardStats(sales, transactions, 'all', TODAY);
+      expect(withKey.ventasMes).toEqual(without.ventasMes);
+      expect(withKey.porSucursal).toEqual(without.porSucursal);
+    });
+  });
+
+  describe('netoLastMonths / incomeLastMonths anchored in the past', () => {
+    const tx = [
+      {
+        transaction_type: 'income',
+        value: '800.00',
+        transaction_date: '2025-09-04',
+        location: 'aquismon',
+      },
+      {
+        transaction_type: 'outcome',
+        value: '300.00',
+        transaction_date: '2025-09-20',
+        location: 'aquismon',
+      },
+      {
+        transaction_type: 'income',
+        value: '999.00',
+        transaction_date: '2026-06-01',
+        location: 'aquismon',
+      },
+    ];
+
+    it('ends the window at the anchor month, not today', () => {
+      const result = netoLastMonths(tx, 'all', '2025-09-01', 6, TODAY);
+      expect(result).toHaveLength(6);
+      expect(result[5].month).toBe('2025-09');
+      expect(result[5].total).toBe(500);
+      // June 2026 is outside the window even though it has data.
+      expect(result.some(r => r.month === '2026-06')).toBe(false);
+    });
+
+    it("labels by the real current year, so a past window keeps its 'YY", () => {
+      const result = netoLastMonths(tx, 'all', '2025-09-01', 6, TODAY);
+      expect(result[5].label).toBe("sep '25");
+    });
+
+    it('incomeLastMonths anchors the same way and ignores outcomes', () => {
+      const result = incomeLastMonths(tx, 'all', '2025-09-01', 6, TODAY);
+      expect(result[5].month).toBe('2025-09');
+      expect(result[5].total).toBe(800);
+    });
+
+    it('stays backward compatible when no anchor is passed', () => {
+      const anchored = netoLastMonths(tx, 'all', TODAY, 6, TODAY);
+      const legacy = netoLastMonths(tx, 'all', TODAY);
+      expect(anchored).toEqual(legacy);
+    });
+  });
+
+  describe('expensesWindow', () => {
+    // The server only ever sends a window trailing today, oldest first.
+    const serverMonths = [
+      { month: '2025-08', total: 10, byBranch: { aquismon: 10 } },
+      { month: '2025-09', total: 20, byBranch: { aquismon: 20 } },
+      { month: '2025-10', total: 30, byBranch: { aquismon: 30 } },
+    ];
+
+    it('slices to the months ending at the anchor', () => {
+      const result = expensesWindow(serverMonths, '2025-09', 2);
+      expect(result.map(m => m.month)).toEqual(['2025-08', '2025-09']);
+      expect(result[1].total).toBe(20);
+    });
+
+    it('zero-fills months the server did not cover', () => {
+      const result = expensesWindow(serverMonths, '2025-09', 4);
+      expect(result.map(m => m.month)).toEqual([
+        '2025-06',
+        '2025-07',
+        '2025-08',
+        '2025-09',
+      ]);
+      expect(result[0]).toEqual({ month: '2025-06', total: 0, byBranch: {} });
+    });
+
+    it('tolerates an empty response', () => {
+      const result = expensesWindow([], '2025-09', 3);
+      expect(result).toHaveLength(3);
+      expect(result.every(m => m.total === 0)).toBe(true);
+    });
   });
 });

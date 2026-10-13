@@ -195,16 +195,16 @@ useFocusEffect(
         </>
       ) : null}
 
-      <Text style={styles.productRow}><Text style={styles.bold}>Número de serie: </Text>{item.serial_number}</Text>
+      <Text style={styles.productRow}><Text style={styles.bold}>Unidades Total: </Text>{item.total_units}</Text>
 
       {userRole === 'admin' || userRole === 'superadmin' ? (
         <Text style={styles.productRow}><Text style={styles.bold}>Fecha de llegada a matriz: </Text>{item.headquarters_arrival_date}</Text>
       ) : null}
 
-      <Text style={styles.productRow}><Text style={styles.bold}>Cantidad original: </Text>{item.original_quantity}</Text>
-      <Text style={styles.productRow}><Text style={styles.bold}>Cantidad actual: </Text>{item.all_branches_quantity}</Text>
-      <Text style={styles.productRow}><Text style={styles.bold}>Identificador: </Text>{item.internal_number}</Text>
-      <Text style={styles.productRow}><Text style={styles.bold}>Descripción: </Text>{item.description}</Text>
+      <Text style={styles.productRow}><Text style={styles.bold}>Cerro Azul Unidades: </Text>{item.cerro_azul_units}</Text>
+      <Text style={styles.productRow}><Text style={styles.bold}>Aquismon Unidades: </Text>{item.aquismon_units}</Text>
+      <Text style={styles.productRow}><Text style={styles.bold}>Tepetzintla Unidades: </Text>{item.tepetzintla_units}</Text>
+      <Text style={styles.productRow}><Text style={styles.bold}>Tlacolula Unidades: </Text>{item.tlacolula_units}</Text>
       {userRole === 'admin' || userRole === 'superadmin' ? (
         <>
           <Text style={styles.productRow}><Text style={styles.bold}>Proveedor: </Text>{item.supplier}</Text>

@@ -8,6 +8,9 @@ export const AuthContext = createContext({});
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+  // False until the stored session has been read, so the app doesn't first
+  // draw the logged-out store and then rebuild everything for the user.
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     // When the API layer sees a 401 (token missing/expired/invalid) it has
@@ -36,11 +39,13 @@ export function AuthProvider({ children }) {
         }
       } catch (e) {
         console.error('Bootstrap error:', e);
+      } finally {
+        setReady(true);
       }
     })();
   }, []);
 
-  // Persist a full session (from passkey verify / enroll) and update context.
+  // Persist a full session (password or passkey login) and update context.
   const persistSession = async (result, fallbackEmail) => {
     const { token, token_exp } = result;
     if (!token) throw new Error('No token in response');
@@ -59,27 +64,11 @@ export function AuthProvider({ children }) {
     return newUser;
   };
 
-  // PASSKEY-REQUIRED step 1: password. A correct password does NOT sign you in;
-  // it returns a pre-auth token (stored so the passkey endpoints work) and tells
-  // the screen whether to VERIFY an existing passkey or ENROLL a new one.
-  // Clients without WebAuthn get the classic full session (fallback).
+  // Email + password signs you in directly; a passkey is optional.
   const signIn = async (email, password) => {
     try {
-      const { isPasskeySupported } = require('../utils/passkey');
-      const supported = isPasskeySupported();
-      const response = await api.post('/auth/login', { email, password, passkeySupported: supported });
-      const data = response.data;
-
-      if (data.preAuth) {
-        await AsyncStorage.multiSet([
-          ['token', data.token],
-          ['token_exp', String(Date.now() + 10 * 60 * 1000)],
-        ]);
-        return { preAuth: true, hasPasskey: data.hasPasskey, email: data.email || email };
-      }
-
-      // Fallback: no WebAuthn → classic session.
-      return await persistSession(data, email);
+      const response = await api.post('/auth/login', { email, password });
+      return await persistSession(response.data, email);
     } catch (err) {
       console.error('AuthContext signIn error:', err);
       const message =
@@ -87,31 +76,18 @@ export function AuthProvider({ children }) {
           || err.response?.data?.message
           || err.message
           || 'Ocurrió un error de autenticación';
-      throw new Error(message);
+      // Keep the HTTP response so SignInScreen can show its 404/401 messages.
+      const error = new Error(message);
+      error.response = err.response;
+      throw error;
     }
   };
 
-  // Passkey login — direct or the mandatory VERIFY step. Persists full session.
+  // Optional passkey login — same persisted session as signIn.
   const signInWithPasskey = async (email) => {
     const { passkeyLogin } = require('../utils/passkey');
     const result = await passkeyLogin(email || undefined);
     return await persistSession(result, email);
-  };
-
-  // Mandatory ENROLL step: create a passkey using the pre-auth token; the server
-  // returns the full session with the successful enrollment.
-  const enrollPasskeyAndFinish = async () => {
-    const { registerPasskey } = require('../utils/passkey');
-    const result = await registerPasskey();
-    if (result && result.session) {
-      return await persistSession(result.session);
-    }
-    return null; // caller falls back to asking the user to sign in with the passkey
-  };
-
-  // Drop a pre-auth token when the user backs out of the passkey step.
-  const clearPreAuth = async () => {
-    await AsyncStorage.multiRemove(['token', 'token_exp']);
   };
 
   const signOut = async () => {
@@ -120,7 +96,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, signIn, signInWithPasskey, enrollPasskeyAndFinish, clearPreAuth, signOut }}>
+    <AuthContext.Provider value={{ user, ready, signIn, signInWithPasskey, signOut }}>
       {children}
     </AuthContext.Provider>
   );

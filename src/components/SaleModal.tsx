@@ -11,6 +11,9 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  StyleProp,
+  TextStyle,
+  Image,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -20,6 +23,9 @@ import { buildIncomePayload } from '../utils/Incoms';
 import { matchesAllKeywords } from '../utils/smartSearch';
 import { roundUpToFive, getPaymentInfo } from '../utils/paymentStatus';
 import { openCashDrawer } from '../utils/thermalPrinter';
+import CambioCalculator from './CambioCalculator';
+import { getCambio } from '../utils/cambio';
+import type { CashChange } from './PaymentsModal';
 import api from '../api';
 
 interface Product {
@@ -52,6 +58,8 @@ interface SaleData {
   plazo: { value: string; unit: string };
   fechaVencimiento: string;
   paymentFrequency: string;
+  /** '' = use the calculated installment; otherwise the amount typed by hand. */
+  pagosDe: string;
   agenteDeVentas: string;
   aclaraciones: string;
   /** '' = normal cash flow; otherwise the reporte-diario payment_type
@@ -68,6 +76,38 @@ const ELECTRONIC_PAYMENT_OPTIONS = [
 
 const FREQUENCY_OPTIONS = ['Semanal', 'Quincenal', 'Mensual', 'Al terminar'];
 
+// Inventory price-column prefix per normalized sucursal key.
+const BRANCH_PRICE_PREFIX: Record<string, string> = {
+  cerroazul: 'cerro_azul',
+  aquismon: 'aquismon',
+  tepetzintla: 'tepetzintla',
+  tlacolula: 'tlacolula',
+};
+
+const EditImg = require('../../Assets/edit.png');
+const RobotImg = require('../../Assets/robot.png');
+
+// Values the form calculates on its own. Each can be taken over by hand with
+// the ✏️ button and handed back to the calculation with 🤖.
+type AutoFieldKey =
+  | 'precioPromocion'
+  | 'precioNormal'
+  | 'saldoPrecioPromocion'
+  | 'saldoPrecioNormal'
+  | 'pagosDe';
+
+// Editing starts from the stored prices/saldos (the saldos already reflect
+// abonos), so nothing is recalculated until a field is handed back with 🤖.
+// Pagos de doesn't depend on the pricing mode; it starts manual only when the
+// sale was saved with a hand-typed amount (see the manualFields initializer).
+const defaultManualFields = (isEditing: boolean): Record<AutoFieldKey, boolean> => ({
+  precioPromocion: isEditing,
+  precioNormal: isEditing,
+  saldoPrecioPromocion: isEditing,
+  saldoPrecioNormal: isEditing,
+  pagosDe: false,
+});
+
 // Task-7 quick-fill: the salesperson's branch decides ciudad/estado; the
 // street is always the generic "Domicilio conocido".
 const BRANCH_ADDRESS: Record<string, { ciudad: string; estado: string }> = {
@@ -80,7 +120,8 @@ const BRANCH_ADDRESS: Record<string, { ciudad: string; estado: string }> = {
 interface SaleModalProps {
   visible: boolean;
   onClose: () => void;
-  onSaved: (data: any) => void;
+  /** Server response ({ id, ... }) and the cash change, if it was calculated. */
+  onSaved: (data: any, cash: CashChange | null) => void;
   initialData: any | null;
 }
 
@@ -95,6 +136,10 @@ export default function SaleModal({
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userBranch, setUserBranch] = useState<string>('');
   const [manualPricing, setManualPricing] = useState(false);
+  const [manualFields, setManualFields] = useState(() => ({
+    ...defaultManualFields(isEditing),
+    pagosDe: Number(initialData?.pagos_de) > 0,
+  }));
   const [signature, setSignature] = useState<string | null>(null);
   const [showSignature, setShowSignature] = useState(false);
   const signatureRef = useRef<any>(null);
@@ -102,6 +147,10 @@ export default function SaleModal({
   // Date picker state
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [tempDate, setTempDate] = useState<Date>(new Date());
+  // Set when saving without a fecha: scrolls back to it and flags it in red.
+  const [fechaMissing, setFechaMissing] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const fechaOffsetY = useRef(0);
 
   const [formData, setFormData] = useState<SaleData>({
     nombre: '',
@@ -132,12 +181,16 @@ export default function SaleModal({
     plazo: { value: '', unit: 'weeks' },
     fechaVencimiento: '',
     paymentFrequency: '',
+    pagosDe: '',
     agenteDeVentas: '',
     aclaraciones: '',
     electronicPayment: '',
   });
   const [showFrequencyOptions, setShowFrequencyOptions] = useState(false);
   const [showElectronicPayment, setShowElectronicPayment] = useState(false);
+  // "Calcular cambio" helper (screen only, never saved).
+  const [showCambio, setShowCambio] = useState(false);
+  const [pagaCon, setPagaCon] = useState('');
 
   const [availableInventory, setAvailableInventory] = useState<any[]>([]);
   const [searchTerms, setSearchTerms] = useState<string[]>(['']);
@@ -248,6 +301,8 @@ export default function SaleModal({
         ? initialData.fechavencimiento.split('T')[0]
         : '',
       paymentFrequency: initialData.payment_frequency || '',
+      pagosDe:
+        Number(initialData.pagos_de) > 0 ? String(initialData.pagos_de) : '',
       agenteDeVentas: initialData.agentedeventas || '',
       aclaraciones: initialData.aclaraciones || '',
       // Stored on the transaction row, not the sale — editing starts blank
@@ -306,6 +361,32 @@ export default function SaleModal({
 
   const toggleMode = () => {
     setManualPricing((prev) => !prev);
+    // Switching pricing mode drops the per-field ✏️ overrides so the
+    // inventory flow is fully automatic again (Pagos de is independent).
+    setManualFields((prev) => ({
+      ...defaultManualFields(isEditing),
+      pagosDe: prev.pagosDe,
+    }));
+  };
+
+  const handleFormaDePagoChange = (value: string) => {
+    const forma = value.toLowerCase();
+    const isCash = forma === 'contado';
+    const locksNormal = isCash || forma === 'apartado';
+    // Fields the new forma de pago locks at 0 go back to automatic so a
+    // hand-typed value isn't left behind a disabled input.
+    setManualFields((prev) => ({
+      ...prev,
+      precioNormal: locksNormal ? false : prev.precioNormal,
+      saldoPrecioNormal: locksNormal ? false : prev.saldoPrecioNormal,
+      saldoPrecioPromocion: isCash ? false : prev.saldoPrecioPromocion,
+      pagosDe: isCash ? false : prev.pagosDe,
+    }));
+    setFormData((prev) => ({
+      ...prev,
+      formaDePago: value,
+      pagosDe: isCash ? '' : prev.pagosDe,
+    }));
   };
 
   const handleInputChange = (field: string, value: any, index?: number) => {
@@ -401,9 +482,17 @@ export default function SaleModal({
   }, [calculateDueDate]);
 
   const getUnitPriceForItem = (inventoryItem: any) => {
-    const branch = formData.sucursal && formData.sucursal.trim()
-      ? formData.sucursal.toLowerCase()
-      : userBranch.toLowerCase();
+    const rawBranch = formData.sucursal && formData.sucursal.trim()
+      ? formData.sucursal
+      : userBranch;
+    // Sucursal comes as 'cerroazul' (picker) or 'Cerro Azul' (user branch),
+    // but the inventory columns are cerro_azul_* — normalize to the prefix.
+    const branchKey = rawBranch
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z]/g, '');
+    const branch = BRANCH_PRICE_PREFIX[branchKey] || branchKey;
     const paymentType = formData.formaDePago.toLowerCase();
     let priceField = '';
     
@@ -425,7 +514,8 @@ export default function SaleModal({
       ...updatedProducts[index],
       producto: inventoryItem.product,
       inventory_id: inventoryItem.id,
-      serial_number: inventoryItem.serial_number || '',
+      // inventory no longer carries a serial; keep whatever the seller typed
+      serial_number: updatedProducts[index].serial_number || '',
       unitPrice: unitPrice,
       totalProductPrice: unitPrice * updatedProducts[index].quantity,
     };
@@ -474,49 +564,81 @@ export default function SaleModal({
     return sum.toFixed(2);
   }, [formData.products]);
 
+  // Runs in both pricing modes: with "Agregar precio manualmente" the
+  // hand-typed unit prices feed the same math as the inventory prices.
   useEffect(() => {
-    if (isEditing || manualPricing) return;
-    
     const totalPrice = Number(calculateTotalPrice());
     let discountedPrice = totalPrice;
-    
+
     if (formData.discount) {
       discountedPrice = totalPrice * (1 - Number(formData.discount) / 100);
     }
-    
+
     const formaLower = formData.formaDePago.toLowerCase();
     // Contado has no normal price (it's paid in full); Apartado only tracks
     // the promo price, so its normal price/saldo stay at 0 as well.
     const skipNormalPrice = formaLower === 'contado' || formaLower === 'apartado';
-    // Rounded up to end in 0 or 5, same rule as the installments.
-    const calculatedPrecioNormal = skipNormalPrice
-      ? 0
-      : roundUpToFive(discountedPrice * 1.12).toFixed(2);
 
-    setFormData((prevData) => ({
-      ...prevData,
-      precioPromocion: discountedPrice.toFixed(2),
-      precioNormal: String(calculatedPrecioNormal),
-      saldoPrecioPromocion:
-        formaLower === 'contado'
+    // Fields taken over by hand keep their value, and the fields derived
+    // from them build on it: a hand-typed promo price still drives the
+    // automatic precio normal and saldos.
+    setFormData((prev) => {
+      const promo = manualFields.precioPromocion
+        ? Number(prev.precioPromocion) || 0
+        : discountedPrice;
+      // Rounded up to end in 0 or 5, same rule as the installments.
+      const normal = manualFields.precioNormal
+        ? Number(prev.precioNormal) || 0
+        : skipNormalPrice
+        ? 0
+        : roundUpToFive(promo * 1.12);
+      const enganche = Number(prev.enganche) || 0;
+
+      const next = {
+        precioPromocion: manualFields.precioPromocion
+          ? prev.precioPromocion
+          : promo.toFixed(2),
+        precioNormal: manualFields.precioNormal
+          ? prev.precioNormal
+          : normal.toFixed(2),
+        saldoPrecioPromocion: manualFields.saldoPrecioPromocion
+          ? prev.saldoPrecioPromocion
+          : formaLower === 'contado'
           ? '0.00'
-          : (discountedPrice - Number(formData.enganche)).toFixed(2),
-      saldoPrecioNormal: skipNormalPrice
-        ? '0.00'
-        : (Number(calculatedPrecioNormal) - Number(formData.enganche)).toFixed(2),
-    }));
+          : (promo - enganche).toFixed(2),
+        saldoPrecioNormal: manualFields.saldoPrecioNormal
+          ? prev.saldoPrecioNormal
+          : skipNormalPrice
+          ? '0.00'
+          : (normal - enganche).toFixed(2),
+      };
+      const unchanged = (Object.keys(next) as (keyof typeof next)[]).every(
+        (key) => next[key] === prev[key],
+      );
+      return unchanged ? prev : { ...prev, ...next };
+    });
   }, [
     calculateTotalPrice,
     formData.discount,
     formData.formaDePago,
     formData.enganche,
-    manualPricing,
-    isEditing,
+    formData.precioPromocion,
+    formData.precioNormal,
+    manualFields,
   ]);
 
   const handleSubmit = async () => {
     if (!formData.nombre || !formData.email || !formData.phone) {
       Alert.alert('Error', 'Por favor completa los campos requeridos');
+      return;
+    }
+
+    if (!formData.fecha) {
+      setFechaMissing(true);
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, fechaOffsetY.current - 12),
+        animated: true,
+      });
       return;
     }
 
@@ -588,10 +710,19 @@ export default function SaleModal({
 
       setIsSaving(false);
       // Pop the cash drawer for the cashier (best-effort; skipped silently
-      // when no printer is paired). Never blocks the save.
-      openCashDrawer();
-      Alert.alert('Éxito', 'Venta guardada correctamente');
-      onSaved(saved);
+      // when no printer is paired). Never blocks the save. Card/transfer/
+      // deposit money never enters the drawer, so it stays closed then.
+      if (!formData.electronicPayment) {
+        openCashDrawer();
+      }
+      const change = showCambio ? getCambio(cashDue, parseFloat(pagaCon)) : null;
+      // The caller shows the confirmation with print/send buttons.
+      onSaved(
+        saved,
+        change && change.faltan === 0
+          ? { pagaCon: parseFloat(pagaCon), cambio: change.cambio }
+          : null,
+      );
     } catch (err) {
       console.error('❌ Sale error:', err);
       setIsSaving(false);
@@ -616,6 +747,50 @@ export default function SaleModal({
   // disabled (and zeroed by the auto-calculation) so the sale and its
   // daily-report row don't carry a saldo normal.
   const isApartado = formData.formaDePago.toLowerCase() === 'apartado';
+  const normalPriceLocked = isContado || isApartado;
+  // Cash collected right now: the whole promo price for Contado, otherwise
+  // the enganche.
+  const cashDue = isContado
+    ? Number(formData.precioPromocion) || 0
+    : Number(formData.enganche) || 0;
+
+  // A hand-typed promo total may be an on-the-spot discount, but flag it in
+  // case it's a typo: it no longer matches the products × units (− descuento).
+  const productsPromo =
+    Number(calculateTotalPrice()) * (1 - (Number(formData.discount) || 0) / 100);
+  const promoMismatch =
+    manualFields.precioPromocion &&
+    Math.abs((Number(formData.precioPromocion) || 0) - productsPromo) >= 0.005;
+
+  // Same installment math the sales list shows, live as the form is filled,
+  // so the seller can quote the payment on the spot.
+  const autoPagosDe = getPaymentInfo({
+    formadepago: formData.formaDePago,
+    preciopromocion: formData.precioPromocion,
+    enganche: formData.enganche,
+    saldo_precio_promocion: formData.saldoPrecioPromocion,
+    plazo: formData.plazo,
+    payment_frequency: formData.paymentFrequency,
+    fecha: formData.fecha,
+    fechavencimiento: formData.fechaVencimiento,
+  }).pagosDe;
+  const showPagosDe =
+    !isContado &&
+    formData.paymentFrequency !== '' &&
+    (autoPagosDe != null || manualFields.pagosDe);
+
+  const toggleManualField = (field: AutoFieldKey) => {
+    const enabling = !manualFields[field];
+    setManualFields((prev) => ({ ...prev, [field]: enabling }));
+    // The price fields are recalculated by the effect above; Pagos de starts
+    // the hand-typed amount from the current installment instead.
+    if (field === 'pagosDe') {
+      setFormData((prev) => ({
+        ...prev,
+        pagosDe: enabling && autoPagosDe != null ? autoPagosDe.toFixed(2) : '',
+      }));
+    }
+  };
 
   const webStyle = `
     .m-signature-pad {
@@ -682,12 +857,12 @@ export default function SaleModal({
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={styles.form}>
+        <ScrollView ref={scrollRef} style={styles.form}>
           <Text style={styles.label}>Forma de pago *</Text>
           <View style={styles.pickerContainer}>
             <Picker
               selectedValue={formData.formaDePago}
-              onValueChange={(value) => handleInputChange('formaDePago', value)}
+              onValueChange={handleFormaDePagoChange}
               itemStyle={styles.pickerItem}
             >
               <Picker.Item label="Contado" value="Contado" color="#333" />
@@ -820,12 +995,34 @@ export default function SaleModal({
             onChangeText={(value) => handleInputChange('estado', value)}
           />
 
-          <Text style={styles.label}>Fecha *</Text>
-          <TouchableOpacity style={styles.dateButton} onPress={showDatepicker}>
-            <Text style={[styles.dateButtonText, !formData.fecha && styles.placeholderText]}>
-              {formData.fecha || 'Seleccionar fecha'}
+          <View
+            onLayout={(e) => {
+              fechaOffsetY.current = e.nativeEvent.layout.y;
+            }}
+          >
+            {fechaMissing && !formData.fecha && (
+              <Text style={styles.fieldErrorText}>Agregar fecha</Text>
+            )}
+            <Text
+              style={[
+                styles.label,
+                fechaMissing && !formData.fecha && styles.labelAfterError,
+              ]}
+            >
+              Fecha *
             </Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.dateButton,
+                fechaMissing && !formData.fecha && styles.dateButtonError,
+              ]}
+              onPress={showDatepicker}
+            >
+              <Text style={[styles.dateButtonText, !formData.fecha && styles.placeholderText]}>
+                {formData.fecha || 'Seleccionar fecha'}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
           {showDatePicker && (
             <View style={styles.datePickerContainer}>
@@ -849,28 +1046,40 @@ export default function SaleModal({
             </View>
           )}
 
-          <TouchableOpacity style={styles.toggleButton} onPress={toggleMode}>
-            <Text style={styles.toggleButtonText}>
-              {manualPricing ? 'Buscar en inventario' : 'Agregar precio manualmente'}
-            </Text>
-          </TouchableOpacity>
-
           <Text style={styles.sectionTitle}>Productos</Text>
+          {/* Grey on purpose: searching the inventory is the preferred path —
+              manual products don't auto-discount branch units. */}
+          <View style={styles.toggleBlock}>
+            <TouchableOpacity style={styles.toggleButton} onPress={toggleMode}>
+              <Text style={styles.toggleButtonText}>
+                {manualPricing ? 'Buscar en inventario' : 'Agregar precio manualmente'}
+              </Text>
+            </TouchableOpacity>
+            {!manualPricing && (
+              <Text style={styles.toggleHint}>
+                Con precio manual no se descuentan unidades del inventario.
+              </Text>
+            )}
+          </View>
           {formData.products.map((product, index) => (
             <View key={index} style={styles.productContainer}>
-              <TextInput
-                style={styles.input}
-                placeholder={manualPricing ? "Producto manual" : "Seleccione desde búsqueda"}
-                value={product.producto}
-                onChangeText={(value) => handleInputChange('producto', value, index)}
-                editable={manualPricing}
-              />
-
-              {!manualPricing && (
+              {manualPricing ? (
                 <>
+                  <Text style={styles.label}>Producto manual</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="Buscar producto..."
+                    placeholder="Escriba el nombre del producto"
+                    value={product.producto}
+                    onChangeText={(value) => handleInputChange('producto', value, index)}
+                  />
+                </>
+              ) : (
+                <>
+                  <Text style={styles.label}>Buscar producto *</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="🔍 Escriba aquí para buscar..."
+                    placeholderTextColor="#0a58ca"
                     value={searchTerms[index]}
                     onChangeText={(value) => {
                       const newTerms = [...searchTerms];
@@ -897,6 +1106,20 @@ export default function SaleModal({
                         ))}
                     </ScrollView>
                   )}
+
+                  <Text style={styles.label}>Producto seleccionado</Text>
+                  <View style={styles.selectedProductBox}>
+                    <Text
+                      style={
+                        product.producto
+                          ? styles.selectedProductText
+                          : styles.selectedProductPlaceholder
+                      }
+                    >
+                      {product.producto ||
+                        'Ninguno — use "Buscar producto" arriba'}
+                    </Text>
+                  </View>
                 </>
               )}
 
@@ -955,25 +1178,29 @@ export default function SaleModal({
             editable={!isContado}
           />
 
-          <Text style={styles.label}>Precio de promoción</Text>
-          <TextInput
-            style={[styles.input, !manualPricing && styles.inputDisabled]}
+          {/* The ✏️/🤖 toggles only show with "Agregar precio manualmente";
+              the inventory flow stays fully automatic. */}
+          <AutoField
+            label="Precio de promoción"
             value={formData.precioPromocion}
             onChangeText={(value) => handleInputChange('precioPromocion', value)}
-            keyboardType="numeric"
-            editable={manualPricing}
+            isManual={manualFields.precioPromocion}
+            onToggle={() => toggleManualField('precioPromocion')}
+            showToggle={manualPricing}
+            editable={manualPricing && manualFields.precioPromocion}
+            warning={promoMismatch ? 'Checar Precio Total' : undefined}
           />
 
-          <Text style={styles.label}>Precio normal</Text>
-          <TextInput
-            style={[
-              styles.input,
-              (!manualPricing || isApartado) && styles.inputDisabled,
-            ]}
+          <AutoField
+            label="Precio normal"
             value={formData.precioNormal}
             onChangeText={(value) => handleInputChange('precioNormal', value)}
-            keyboardType="numeric"
-            editable={manualPricing && !isApartado}
+            isManual={manualFields.precioNormal}
+            onToggle={() => toggleManualField('precioNormal')}
+            showToggle={manualPricing && !normalPriceLocked}
+            editable={
+              manualPricing && manualFields.precioNormal && !normalPriceLocked
+            }
           />
 
           <Text style={styles.label}>Descuento (%)</Text>
@@ -984,38 +1211,27 @@ export default function SaleModal({
             keyboardType="numeric"
           />
 
-          {(manualPricing || isEditing) && (
-            <>
-              <Text style={styles.label}>Saldo Precio Promoción</Text>
-              <TextInput
-                style={[styles.input, isContado && styles.inputDisabled]}
-                value={formData.saldoPrecioPromocion}
-                onChangeText={(value) => handleInputChange('saldoPrecioPromocion', value)}
-                keyboardType="numeric"
-                editable={!isContado}
-              />
-              <Text style={styles.label}>Saldo Precio Normal</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  (isContado || isApartado) && styles.inputDisabled,
-                ]}
-                value={formData.saldoPrecioNormal}
-                onChangeText={(value) => handleInputChange('saldoPrecioNormal', value)}
-                keyboardType="numeric"
-                editable={!isContado && !isApartado}
-              />
-            </>
-          )}
+          {/* When editing, the saldos start as the stored values (manual),
+              so they stay editable even in inventory mode. */}
+          <AutoField
+            label="Saldo Precio Promoción"
+            value={formData.saldoPrecioPromocion}
+            onChangeText={(value) => handleInputChange('saldoPrecioPromocion', value)}
+            isManual={manualFields.saldoPrecioPromocion}
+            onToggle={() => toggleManualField('saldoPrecioPromocion')}
+            showToggle={manualPricing && !isContado}
+            editable={manualFields.saldoPrecioPromocion && !isContado}
+          />
 
-          {!manualPricing && !isEditing && (
-            <>
-              <Text style={styles.label}>Saldo Precio Promoción</Text>
-              <Text style={styles.displayText}>{formData.saldoPrecioPromocion}</Text>
-              <Text style={styles.label}>Saldo Precio Normal</Text>
-              <Text style={styles.displayText}>{formData.saldoPrecioNormal}</Text>
-            </>
-          )}
+          <AutoField
+            label="Saldo Precio Normal"
+            value={formData.saldoPrecioNormal}
+            onChangeText={(value) => handleInputChange('saldoPrecioNormal', value)}
+            isManual={manualFields.saldoPrecioNormal}
+            onToggle={() => toggleManualField('saldoPrecioNormal')}
+            showToggle={manualPricing && !normalPriceLocked}
+            editable={manualFields.saldoPrecioNormal && !normalPriceLocked}
+          />
 
           <Text style={styles.label}>Plazo</Text>
           <TextInput
@@ -1084,30 +1300,28 @@ export default function SaleModal({
             </View>
           )}
 
-          {/* Same installment math the sales list shows, live as the form
-              is filled, so the seller can quote the payment on the spot. */}
-          {!isContado &&
-            formData.paymentFrequency !== '' &&
-            (() => {
-              const info = getPaymentInfo({
-                formadepago: formData.formaDePago,
-                preciopromocion: formData.precioPromocion,
-                enganche: formData.enganche,
-                saldo_precio_promocion: formData.saldoPrecioPromocion,
-                plazo: formData.plazo,
-                payment_frequency: formData.paymentFrequency,
-                fecha: formData.fecha,
-                fechavencimiento: formData.fechaVencimiento,
-              });
-              return info.pagosDe != null ? (
-                <Text style={styles.pagosDeText}>
-                  Pagos de: ${info.pagosDe.toFixed(2)}
-                  {formData.paymentFrequency === 'Al terminar'
-                    ? ' (al terminar el plazo)'
-                    : ''}
-                </Text>
-              ) : null;
-            })()}
+          {showPagosDe && (
+            <AutoField
+              label={
+                formData.paymentFrequency === 'Al terminar'
+                  ? 'Pagos de (al terminar el plazo)'
+                  : 'Pagos de'
+              }
+              value={
+                manualFields.pagosDe
+                  ? formData.pagosDe
+                  : autoPagosDe?.toFixed(2) ?? ''
+              }
+              onChangeText={(value) => handleInputChange('pagosDe', value)}
+              isManual={manualFields.pagosDe}
+              onToggle={() => toggleManualField('pagosDe')}
+              showToggle
+              editable={manualFields.pagosDe}
+              prefix="$"
+              inputStyle={styles.pagosDeInput}
+              editLabel="Modificar pagos"
+            />
+          )}
 
           <Text style={styles.label}>Agente de ventas *</Text>
           <TextInput
@@ -1141,6 +1355,27 @@ export default function SaleModal({
           )}
 
           <TouchableOpacity
+            style={[styles.cambioButton, showCambio && styles.cambioButtonActive]}
+            onPress={() => setShowCambio((prev) => !prev)}
+          >
+            <Text
+              style={[
+                styles.cambioButtonText,
+                showCambio && styles.cambioButtonTextActive,
+              ]}
+            >
+              {showCambio ? 'Ocultar cambio' : 'Calcular cambio'}
+            </Text>
+          </TouchableOpacity>
+          {showCambio && (
+            <CambioCalculator
+              amount={cashDue}
+              pagaCon={pagaCon}
+              onChangePagaCon={setPagaCon}
+            />
+          )}
+
+          <TouchableOpacity
             style={[styles.submitButton, isSaving && styles.submitButtonDisabled]}
             onPress={handleSubmit}
             disabled={isSaving}
@@ -1157,6 +1392,82 @@ export default function SaleModal({
   );
 }
 
+interface AutoFieldProps {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  /** True while the seller is typing this value by hand. */
+  isManual: boolean;
+  onToggle: () => void;
+  showToggle: boolean;
+  editable: boolean;
+  prefix?: string;
+  inputStyle?: StyleProp<TextStyle>;
+  /** Accessibility label for the edit (pencil) button. */
+  editLabel?: string;
+  /** Red text shown above the label. */
+  warning?: string;
+}
+
+// A calculated value with a pencil button (edit.png) inside the input on the
+// right to type it by hand; while manual it shows robot.png to go back to the
+// calculation.
+function AutoField({
+  label,
+  value,
+  onChangeText,
+  isManual,
+  onToggle,
+  showToggle,
+  editable,
+  prefix,
+  inputStyle,
+  editLabel = 'Editar manualmente',
+  warning,
+}: AutoFieldProps): React.JSX.Element {
+  return (
+    <>
+      {warning ? <Text style={styles.fieldErrorText}>{warning}</Text> : null}
+      <Text style={[styles.label, warning ? styles.labelAfterError : null]}>
+        {label}
+      </Text>
+      <View>
+        <TextInput
+          style={[
+            styles.input,
+            !editable && styles.inputDisabled,
+            inputStyle,
+            prefix ? styles.autoFieldInputWithPrefix : null,
+            showToggle ? styles.autoFieldInputWithToggle : null,
+          ]}
+          value={value}
+          onChangeText={onChangeText}
+          keyboardType="numeric"
+          editable={editable}
+        />
+        {prefix ? (
+          <View pointerEvents="none" style={styles.autoFieldPrefix}>
+            <Text style={[styles.autoFieldPrefixText, inputStyle]}>{prefix}</Text>
+          </View>
+        ) : null}
+        {showToggle && (
+          <TouchableOpacity
+            style={styles.autoFieldToggle}
+            onPress={onToggle}
+            accessibilityRole="button"
+            accessibilityLabel={isManual ? 'Calcular automáticamente' : editLabel}
+          >
+            <Image
+              source={isManual ? RobotImg : EditImg}
+              style={styles.autoFieldToggleIcon}
+            />
+          </TouchableOpacity>
+        )}
+      </View>
+    </>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1167,7 +1478,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    paddingTop: 50,
+    // iOS: clear the notch. Android: modals already start below the status
+    // bar, so 50 left a blank band there.
+    paddingTop: Platform.OS === 'ios' ? 50 : 16,
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',
   },
@@ -1212,11 +1525,47 @@ const styles = StyleSheet.create({
   electronicButtonTextActive: {
     color: '#fff',
   },
-  pagosDeText: {
-    marginTop: 8,
-    fontSize: 16,
+  pagosDeInput: {
     fontWeight: 'bold',
     color: '#007bff',
+  },
+  autoFieldInputWithPrefix: {
+    paddingLeft: 24,
+  },
+  autoFieldInputWithToggle: {
+    paddingRight: 48,
+  },
+  autoFieldPrefix: {
+    position: 'absolute',
+    left: 10,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+  },
+  autoFieldPrefixText: {
+    fontSize: 16,
+    color: '#666',
+  },
+  autoFieldToggle: {
+    position: 'absolute',
+    right: 4,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  autoFieldToggleIcon: {
+    width: 24,
+    height: 24,
+  },
+  fieldErrorText: {
+    color: '#dc3545',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 12,
+  },
+  labelAfterError: {
+    marginTop: 2,
   },
   input: {
     borderWidth: 1,
@@ -1290,6 +1639,9 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: '#fff',
   },
+  dateButtonError: {
+    borderColor: '#dc3545',
+  },
   dateButtonText: {
     fontSize: 16,
     color: '#333',
@@ -1331,16 +1683,51 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
+  toggleBlock: {
+    marginBottom: 12,
+  },
   toggleButton: {
-    backgroundColor: '#1c60d5',
+    backgroundColor: '#6c757d',
     padding: 12,
     borderRadius: 6,
     alignItems: 'center',
-    marginVertical: 12,
+    marginTop: 4,
   },
   toggleButtonText: {
     color: '#fff',
     fontWeight: '600',
+  },
+  toggleHint: {
+    fontSize: 12,
+    color: '#6c757d',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  searchInput: {
+    borderWidth: 2,
+    borderColor: '#007bff',
+    borderRadius: 6,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fff',
+    fontWeight: '600',
+  },
+  selectedProductBox: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 6,
+    padding: 10,
+    backgroundColor: '#f0f0f0',
+  },
+  selectedProductText: {
+    fontSize: 16,
+    color: '#333',
+    fontWeight: '600',
+  },
+  selectedProductPlaceholder: {
+    fontSize: 15,
+    color: '#999',
+    fontStyle: 'italic',
   },
   sectionTitle: {
     fontSize: 18,
@@ -1391,13 +1778,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 16,
   },
-  displayText: {
-    fontSize: 16,
-    padding: 10,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 6,
-    color: '#333',
-  },
   signatureButton: {
     backgroundColor: '#6c757d',
     padding: 12,
@@ -1419,6 +1799,26 @@ const styles = StyleSheet.create({
   clearSignatureButtonText: {
     color: '#fff',
     fontWeight: '600',
+  },
+  cambioButton: {
+    marginTop: 16,
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#28a745',
+    backgroundColor: '#fff',
+  },
+  cambioButtonActive: {
+    backgroundColor: '#28a745',
+  },
+  cambioButtonText: {
+    color: '#1e7e34',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  cambioButtonTextActive: {
+    color: '#fff',
   },
   submitButton: {
     backgroundColor: '#007bff',
@@ -1444,7 +1844,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     padding: 16,
-    paddingTop: 50,
+    // iOS: clear the notch. Android: modals already start below the status
+    // bar, so 50 left a blank band there.
+    paddingTop: Platform.OS === 'ios' ? 50 : 16,
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',
   },

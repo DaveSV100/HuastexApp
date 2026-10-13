@@ -198,15 +198,20 @@ export function getPaymentInfo(sale: any, now: Date = new Date()): PaymentInfo {
   const saldoNormalConRecargo =
     Math.round(saldoNormal * (1 + surchargePct / 100) * 100) / 100;
 
-  // Installment ("Pagos de")
+  // Installment ("Pagos de"). An amount typed by hand in the sale form is
+  // saved as pagos_de and wins over the calculation.
+  const storedPagosDe = num(sale?.pagos_de);
   let pagosDe: number | null = null;
   let periodLabel: string | null = null;
   if (isCredit && frequency === 'Al terminar') {
-    pagosDe = saldoPromo;
+    pagosDe = storedPagosDe > 0 ? storedPagosDe : saldoPromo;
   } else if (isCredit && frequency) {
     const numPayments = getNumberOfPayments(sale);
     const financed = precioPromo - enganche;
-    if (numPayments && financed > 0) {
+    if (storedPagosDe > 0) {
+      pagosDe = storedPagosDe;
+      periodLabel = PERIOD_LABEL[frequency];
+    } else if (numPayments && financed > 0) {
       pagosDe = roundUpToFive(financed / numPayments);
       periodLabel = PERIOD_LABEL[frequency];
     }

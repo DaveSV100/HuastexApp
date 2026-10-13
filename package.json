@@ -1,6 +1,6 @@
 {
   "name": "HuastexApp",
-  "version": "2.4.3",
+  "version": "2.5.1",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
@@ -36,6 +36,7 @@
     "react": "19.2.0",
     "react-native": "0.83.0",
     "react-native-ble-plx": "^3.5.1",
+    "react-native-image-picker": "^8.2.1",
     "react-native-inappbrowser-reborn": "^3.7.1",
     "react-native-passkey": "^3.5.0",
     "react-native-safe-area-context": "^5.5.2",
@@ -44,7 +45,8 @@
     "react-native-signature-canvas": "^5.0.1",
     "react-native-view-shot": "^5.1.0",
     "react-native-webview": "^13.16.1",
-    "upng-js": "^2.1.0"
+    "upng-js": "^2.1.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

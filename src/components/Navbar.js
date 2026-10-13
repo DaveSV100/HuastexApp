@@ -1,6 +1,7 @@
 // src/components/Navbar.tsx
 import React, { useState, useContext } from 'react';
-import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Image, StyleSheet, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { CartContext } from '../contexts/CartContext';
 import { AuthContext } from '../contexts/AuthContext';
@@ -12,6 +13,11 @@ const Navbar = (props) => {
   const navigation = props.navigation || hookNavigation;
   const { count } = useContext(CartContext);
   const { user } = useContext(AuthContext);
+  // iOS keeps its fixed padding (clears the notch). Android must use the real
+  // status-bar inset: most Android phones already lay the app out below the
+  // status bar (inset 0), so the fixed 60 showed up as a big blank band.
+  const insets = useSafeAreaInsets();
+  const androidTop = Platform.OS === 'android' ? { paddingTop: insets.top + 12 } : null;
 
   const toggleMenu = () => setMenuOpen(!menuOpen);
 
@@ -25,7 +31,7 @@ const Navbar = (props) => {
   const accountRoute = user ? 'Home' : 'SignIn';
 
   return (
-    <View style={styles.navbar}>
+    <View style={[styles.navbar, androidTop]}>
       <View style={styles.navbarContainer}>
         {/* Hamburger Menu */}
         <TouchableOpacity onPress={toggleMenu} style={styles.hamburgerMenu}>
@@ -35,8 +41,11 @@ const Navbar = (props) => {
 
         {/* Logo & Brand */}
         <TouchableOpacity onPress={() => navigation.navigate('Shop')} style={styles.logoBrand}>
+          {/* Small copy of the logo sized for the 40pt header: the full
+              500 KB logo decoded slowly enough to land in the wrong (reused)
+              image view on iOS. */}
           <Image
-            source={require('../../Assets/logo.png')}
+            source={require('../../Assets/logo_header.png')}
             style={styles.logo}
           />
           <Text style={styles.brand}>Huastex</Text>

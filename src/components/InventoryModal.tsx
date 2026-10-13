@@ -31,7 +31,7 @@ export default function InventoryModal({ visible, onClose, onSave, initialData =
     product: '',
     price_cost: '',
     model: '',
-    serial_number: '',
+    total_units: '',
     cerro_azul_price: '',
     aquismon_price: '',
     tepetzintla_price: '',
@@ -45,10 +45,10 @@ export default function InventoryModal({ visible, onClose, onSave, initialData =
     tlacolula_msiPrice: '',
     tlacolula_creditPrice: '',
     headquarters_arrival_date: '',
-    original_quantity: '',
-    all_branches_quantity: '',
-    internal_number: '',
-    description: '',
+    cerro_azul_units: '',
+    aquismon_units: '',
+    tepetzintla_units: '',
+    tlacolula_units: '',
     category: '',
     supplier: '',
     supplier_bill: '',
@@ -160,8 +160,13 @@ export default function InventoryModal({ visible, onClose, onSave, initialData =
     dataToSubmit.tlacolula_msiPrice = Number(dataToSubmit.tlacolula_msiPrice) || null;
     dataToSubmit.tlacolula_creditPrice = Number(dataToSubmit.tlacolula_creditPrice) || null;
 
-    dataToSubmit.original_quantity = Number(dataToSubmit.original_quantity) || null;
-    dataToSubmit.all_branches_quantity = Number(dataToSubmit.all_branches_quantity) || null;
+    // Unit counts are nullable integers; '' -> null, '0' stays 0.
+    ['total_units', 'cerro_azul_units', 'aquismon_units', 'tepetzintla_units', 'tlacolula_units']
+      .forEach((key) => {
+        const raw = safeTrim(dataToSubmit[key]);
+        dataToSubmit[key] =
+          raw === '' || raw == null || isNaN(Number(raw)) ? null : parseInt(String(raw), 10);
+      });
     dataToSubmit.formula_id = formData.formula_id || null;
 
     try {
@@ -247,17 +252,20 @@ export default function InventoryModal({ visible, onClose, onSave, initialData =
             <Text style={styles.label}>Headquarters Arrival Date</Text>
             <TextInput style={styles.input} value={String(formData.headquarters_arrival_date ?? '')} onChangeText={(t) => handleChange('headquarters_arrival_date', t)} placeholder="YYYY-MM-DD or leave empty" />
 
-            <Text style={styles.label}>Original Quantity</Text>
-            <TextInput style={styles.input} keyboardType="numeric" value={String(formData.original_quantity ?? '')} onChangeText={(t) => handleChange('original_quantity', t)} />
+            <Text style={styles.label}>Unidades Total</Text>
+            <TextInput style={styles.input} keyboardType="numeric" value={String(formData.total_units ?? '')} onChangeText={(t) => handleChange('total_units', t)} />
 
-            <Text style={styles.label}>All Branches Quantity</Text>
-            <TextInput style={styles.input} keyboardType="numeric" value={String(formData.all_branches_quantity ?? '')} onChangeText={(t) => handleChange('all_branches_quantity', t)} />
+            <Text style={styles.label}>Cerro Azul Unidades</Text>
+            <TextInput style={styles.input} keyboardType="numeric" value={String(formData.cerro_azul_units ?? '')} onChangeText={(t) => handleChange('cerro_azul_units', t)} />
 
-            <Text style={styles.label}>Internal Number</Text>
-            <TextInput style={styles.input} value={String(formData.internal_number ?? '')} onChangeText={(t) => handleChange('internal_number', t)} />
+            <Text style={styles.label}>Aquismon Unidades</Text>
+            <TextInput style={styles.input} keyboardType="numeric" value={String(formData.aquismon_units ?? '')} onChangeText={(t) => handleChange('aquismon_units', t)} />
 
-            <Text style={styles.label}>Description</Text>
-            <TextInput style={styles.input} value={String(formData.description ?? '')} onChangeText={(t) => handleChange('description', t)} />
+            <Text style={styles.label}>Tepetzintla Unidades</Text>
+            <TextInput style={styles.input} keyboardType="numeric" value={String(formData.tepetzintla_units ?? '')} onChangeText={(t) => handleChange('tepetzintla_units', t)} />
+
+            <Text style={styles.label}>Tlacolula Unidades</Text>
+            <TextInput style={styles.input} keyboardType="numeric" value={String(formData.tlacolula_units ?? '')} onChangeText={(t) => handleChange('tlacolula_units', t)} />
 
             <Text style={styles.label}>Supplier</Text>
             <TextInput style={styles.input} value={String(formData.supplier ?? '')} onChangeText={(t) => handleChange('supplier', t)} />
@@ -268,12 +276,8 @@ export default function InventoryModal({ visible, onClose, onSave, initialData =
             <Text style={styles.label}>Final Customer Bill</Text>
             <TextInput style={styles.input} value={String(formData.final_customer_bill ?? '')} onChangeText={(t) => handleChange('final_customer_bill', t)} />
 
-            <Text style={styles.label}>Devolution Bill</Text>
-            <TextInput style={styles.input} value={String(formData.devolution_bill ?? '')} onChangeText={(t) => handleChange('devolution_bill', t)} />
-
-            <Text style={styles.label}>Bank Deposit</Text>
-            <TextInput style={styles.input} value={String(formData.bank_deposit ?? '')} onChangeText={(t) => handleChange('bank_deposit', t)} />
-
+            {/* devolution_bill / bank_deposit stay in formData (and the payload)
+                but are hidden from the form on purpose. */}
             <Text style={styles.label}>Comments</Text>
             <TextInput style={styles.input} value={String(formData.comments ?? '')} onChangeText={(t) => handleChange('comments', t)} />
 

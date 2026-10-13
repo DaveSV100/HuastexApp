@@ -17,11 +17,14 @@ import {
   AppState,
 } from 'react-native';
 import ViewShot from 'react-native-view-shot';
-import { CameraRoll } from '@react-native-camera-roll/camera-roll';
+import { saveImageToGallery } from '../../utils/gallery';
 import api from '../../api';
 import SaleModal from '../../components/SaleModal';
 import PaymentsModal from '../../components/PaymentsModal';
 import PrintTicketModal from '../../components/PrintTicketModal';
+import ReceiptImageModal from '../../components/ReceiptImageModal';
+import type { CashChange } from '../../components/PaymentsModal';
+import { formatMoney } from '../../utils/customerBalance';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, CommonActions, useFocusEffect, useRoute } from '@react-navigation/native';
 import { getPaymentInfo, SaleStatus } from '../../utils/paymentStatus';
@@ -57,6 +60,24 @@ interface Sale {
   firmadigital?: string;
   payment_frequency?: string | null;
   pp_enabled?: boolean | null;
+}
+
+interface AbonoReceipt {
+  sale: Sale;
+  payment: any;
+}
+
+// Confirmation shown right after saving a venta/abono, so the receipt can be
+// printed or sent immediately instead of after the whole list reloads.
+interface SavedReceipt {
+  kind: 'venta' | 'abono';
+  saleId: number;
+  /** Fresh copy of the sale; null while loading (venta) or if it failed. */
+  sale: Sale | null;
+  loading: boolean;
+  payment?: any;
+  cash: CashChange | null;
+  isEdit?: boolean;
 }
 
 const STATUS_META: Record<SaleStatus, { label: string; icon: any }> = {
@@ -121,6 +142,11 @@ export default function SalesScreen(): React.JSX.Element {
   // user to come back from WhatsApp before offering the next one.
   const reminderQueueRef = useRef<Sale[]>([]);
   const awaitingWhatsAppReturnRef = useRef(false);
+  const [savedReceipt, setSavedReceipt] = useState<SavedReceipt | null>(null);
+  // Abono receipt flows opened from that confirmation.
+  const [printAbono, setPrintAbono] = useState<AbonoReceipt | null>(null);
+  const [pdfAbono, setPdfAbono] = useState<AbonoReceipt | null>(null);
+  const [imageAbono, setImageAbono] = useState<AbonoReceipt | null>(null);
 
 const BackImg = require('../../../Assets/back.png');
 const LogoImg = require('../../../Assets/logo.png');
@@ -156,8 +182,9 @@ const TrashImg = require('../../../Assets/trash.png');
     }
   }, [route.params]);
 
-  const fetchSales = async () => {
-    setIsLoading(true);
+  // `silent` keeps the current list on screen (no full-screen spinner).
+  const fetchSales = async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setIsLoading(true);
     try {
       const response = await api.get('/sales');
       setSales(response.data);
@@ -165,7 +192,28 @@ const TrashImg = require('../../../Assets/trash.png');
       console.error('Error fetching sales:', error);
       Alert.alert('Error', 'No se pudieron cargar las ventas');
     } finally {
-      setIsLoading(false);
+      if (!options?.silent) setIsLoading(false);
+    }
+  };
+
+  // Re-reads just one sale (GET /sales/:id is a single row, fast) and swaps
+  // it into the list — re-downloading every sale after each save took so
+  // long that receipts couldn't be printed or sent until it finished.
+  const refreshSale = async (saleId: number): Promise<Sale | null> => {
+    try {
+      const { data } = await api.get(`/sales/${saleId}`);
+      if (!data || data.id == null) return null;
+      setSales((prev) =>
+        prev.some((s) => s && s.id === data.id)
+          ? prev.map((s) => (s && s.id === data.id ? data : s))
+          : [data, ...prev],
+      );
+      return data;
+    } catch (err) {
+      console.error('Error refreshing sale:', err);
+      // Fall back to the full reload, in the background.
+      fetchSales({ silent: true });
+      return null;
     }
   };
 
@@ -184,9 +232,22 @@ const TrashImg = require('../../../Assets/trash.png');
     setEditingSaleData(null);
   };
 
-  const handleSaleSaved = () => {
-    fetchSales();
+  const handleSaleSaved = (saved: any, cash: CashChange | null) => {
+    const saleId = saved?.id ?? editingSaleData?.id ?? null;
+    const isEdit = Boolean(editingSaleData);
     handleCloseSaleModal();
+    if (saleId == null) {
+      fetchSales({ silent: true });
+      return;
+    }
+    setSavedReceipt({ kind: 'venta', saleId, sale: null, loading: true, cash, isEdit });
+    refreshSale(saleId).then((fresh) => {
+      setSavedReceipt((prev) =>
+        prev && prev.kind === 'venta' && prev.saleId === saleId
+          ? { ...prev, sale: fresh, loading: false }
+          : prev,
+      );
+    });
   };
 
   const handleDeleteSale = async (saleId: number) => {
@@ -226,9 +287,24 @@ const TrashImg = require('../../../Assets/trash.png');
     setSelectedSaleForPayment(null);
   };
 
-  const handlePaymentSuccess = () => {
-    fetchSales();
+  const handlePaymentSuccess = (payment: any, cash: CashChange | null) => {
+    const sale = selectedSaleForPayment;
     handleClosePaymentsModal();
+    if (!sale) {
+      fetchSales({ silent: true });
+      return;
+    }
+    // The abono receipt takes its saldos from the payment row itself, so it
+    // can be printed right away; the sale is refreshed for the list.
+    setSavedReceipt({ kind: 'abono', saleId: sale.id, sale, loading: false, payment, cash });
+    refreshSale(sale.id).then((fresh) => {
+      if (!fresh) return;
+      setSavedReceipt((prev) =>
+        prev && prev.kind === 'abono' && prev.saleId === sale.id
+          ? { ...prev, sale: fresh }
+          : prev,
+      );
+    });
   };
 
   // "Habilitar PP": manually restore the promo price after the 15-day window.
@@ -255,8 +331,12 @@ const TrashImg = require('../../../Assets/trash.png');
     );
   };
 
+  // Keep the typed text verbatim: rewriting it here (e.g. .toLowerCase()) makes
+  // the controlled value differ from what Android's keyboard just committed, and
+  // the composing region re-inserts the character ("a" -> "aaa"). Matching is
+  // case-insensitive anyway via normalizeSearchText().
   const handleSearchChange = (text: string) => {
-    setSearchQuery(text.toLowerCase());
+    setSearchQuery(text);
   };
 
   const handleSaveSaleImage = async () => {
@@ -275,7 +355,7 @@ const TrashImg = require('../../../Assets/trash.png');
         }
       }
       const uri = await receiptRef.current.capture();
-      await CameraRoll.saveAsset(uri, { type: 'photo' });
+      await saveImageToGallery(uri);
       Alert.alert('Éxito', 'La venta se guardó como imagen en tu galería.');
       setDownloadSale(null);
     } catch (err) {
@@ -862,6 +942,8 @@ const TrashImg = require('../../../Assets/trash.png');
             placeholder="Buscar por ID, Nombre o Producto"
             value={searchQuery}
             onChangeText={handleSearchChange}
+            autoCapitalize="none"
+            autoCorrect={false}
           />
         </View>
 
@@ -938,6 +1020,125 @@ const TrashImg = require('../../../Assets/trash.png');
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* A plain overlay, not a <Modal>: it hides while one of the receipt
+          modals below is open and comes back when it closes (swapping two
+          native modals at once is unreliable on iOS). */}
+      {savedReceipt &&
+        !(printSale || pdfSale || downloadSale || printAbono || pdfAbono || imageAbono) && (
+          <View style={styles.savedOverlay}>
+            <View style={styles.savedSheet}>
+              <Text style={styles.savedCheck}>✓</Text>
+              <Text style={styles.savedTitle}>
+                {savedReceipt.kind === 'abono'
+                  ? 'Abono registrado'
+                  : savedReceipt.isEdit
+                  ? `Venta #${savedReceipt.saleId} actualizada`
+                  : `Venta #${savedReceipt.saleId} guardada`}
+              </Text>
+              {Boolean(savedReceipt.sale?.nombre) && (
+                <Text style={styles.savedSubtitle}>
+                  {savedReceipt.kind === 'abono' ? `Venta #${savedReceipt.saleId} · ` : ''}
+                  {savedReceipt.sale?.nombre}
+                </Text>
+              )}
+              {savedReceipt.kind === 'abono' && savedReceipt.payment && (
+                <Text style={styles.savedAmount}>
+                  {formatMoney(Number(savedReceipt.payment.cantidad) || 0)}
+                </Text>
+              )}
+
+              {savedReceipt.cash && (
+                <View style={styles.savedCambio}>
+                  <Text style={styles.savedCambioPaid}>
+                    Pagó con {formatMoney(savedReceipt.cash.pagaCon)}
+                  </Text>
+                  <Text style={styles.savedCambioLabel}>Cambio a entregar</Text>
+                  <Text style={styles.savedCambioAmount}>
+                    {formatMoney(savedReceipt.cash.cambio)}
+                  </Text>
+                </View>
+              )}
+
+              {savedReceipt.loading ? (
+                <View style={styles.savedLoading}>
+                  <ActivityIndicator color="#007bff" />
+                  <Text style={styles.savedLoadingText}>Preparando recibo…</Text>
+                </View>
+              ) : savedReceipt.sale ? (
+                (() => {
+                  const sale = savedReceipt.sale;
+                  const abono =
+                    savedReceipt.kind === 'abono' && savedReceipt.payment
+                      ? { sale, payment: savedReceipt.payment }
+                      : null;
+                  return (
+                    <>
+                      <TouchableOpacity
+                        style={[styles.savedAction, styles.savedActionPrint]}
+                        onPress={() => (abono ? setPrintAbono(abono) : setPrintSale(sale))}
+                      >
+                        <Text style={styles.buttonText}>Imprimir recibo</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.savedAction, styles.savedActionSend]}
+                        onPress={() => (abono ? setImageAbono(abono) : setDownloadSale(sale))}
+                      >
+                        <Text style={styles.buttonText}>
+                          {normalizePhoneMx(sale.phone)
+                            ? 'Enviar por WhatsApp / Guardar imagen'
+                            : 'Guardar imagen'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.savedAction, styles.savedActionPdf]}
+                        onPress={() => (abono ? setPdfAbono(abono) : setPdfSale(sale))}
+                      >
+                        <Text style={styles.buttonText}>PDF</Text>
+                      </TouchableOpacity>
+                    </>
+                  );
+                })()
+              ) : (
+                <Text style={styles.savedError}>
+                  Se guardó, pero no se pudo cargar el recibo. Búscalo en la lista.
+                </Text>
+              )}
+
+              <TouchableOpacity
+                style={styles.savedDone}
+                onPress={() => setSavedReceipt(null)}
+              >
+                <Text style={styles.savedDoneText}>Listo</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+      {printAbono && (
+        <PrintTicketModal
+          sale={printAbono.sale}
+          payment={printAbono.payment}
+          onClose={() => setPrintAbono(null)}
+        />
+      )}
+
+      {pdfAbono && (
+        <PrintTicketModal
+          sale={pdfAbono.sale}
+          payment={pdfAbono.payment}
+          autoPdf
+          onClose={() => setPdfAbono(null)}
+        />
+      )}
+
+      {imageAbono && (
+        <ReceiptImageModal
+          sale={imageAbono.sale}
+          payment={imageAbono.payment}
+          onClose={() => setImageAbono(null)}
+        />
+      )}
 
       {isSaleModalOpen && (
         <SaleModal
@@ -1072,18 +1273,18 @@ const TrashImg = require('../../../Assets/trash.png');
                         <Text style={styles.detailLabel}>Enganche: </Text>
                         ${downloadSale.enganche}
                       </Text>
-                      {!promoGone && (
-                        <Text style={styles.receiptText}>
-                          <Text style={styles.detailLabel}>Saldo Precio Promoción: </Text>
-                          ${downloadSale.saldo_precio_promocion}
-                        </Text>
-                      )}
                       <Text style={styles.receiptText}>
                         <Text style={styles.detailLabel}>
                           Saldo Precio Normal{promoGone && dlInfo.surchargePct ? ' (con interés)' : ''}:{' '}
                         </Text>
                         ${saldoNormalShown}
                       </Text>
+                      {!promoGone && (
+                        <Text style={styles.receiptText}>
+                          <Text style={styles.detailLabel}>Saldo Precio Promoción: </Text>
+                          ${downloadSale.saldo_precio_promocion}
+                        </Text>
+                      )}
                     </>
                   );
                 })()}
@@ -1166,6 +1367,108 @@ const TrashImg = require('../../../Assets/trash.png');
 }
 
 const styles = StyleSheet.create({
+  savedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  savedSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 20,
+    paddingBottom: 32,
+    alignItems: 'stretch',
+  },
+  savedCheck: {
+    fontSize: 34,
+    color: '#28a745',
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
+  savedTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    color: '#1f2d3d',
+  },
+  savedSubtitle: {
+    fontSize: 15,
+    textAlign: 'center',
+    color: '#5b6878',
+    marginTop: 4,
+  },
+  savedAmount: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    color: '#1f2d3d',
+    marginTop: 6,
+  },
+  savedCambio: {
+    marginTop: 12,
+    borderRadius: 10,
+    padding: 12,
+    backgroundColor: '#d9f2df',
+    alignItems: 'center',
+  },
+  savedCambioPaid: {
+    fontSize: 14,
+    color: '#1e7e34',
+  },
+  savedCambioLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1e7e34',
+    marginTop: 4,
+  },
+  savedCambioAmount: {
+    fontSize: 30,
+    fontWeight: 'bold',
+    color: '#1e7e34',
+  },
+  savedLoading: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 16,
+  },
+  savedLoadingText: {
+    color: '#5b6878',
+    fontSize: 15,
+  },
+  savedAction: {
+    marginTop: 10,
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  savedActionPrint: {
+    backgroundColor: '#fd7e14',
+  },
+  savedActionSend: {
+    backgroundColor: '#25D366',
+  },
+  savedActionPdf: {
+    backgroundColor: '#6c757d',
+  },
+  savedError: {
+    marginTop: 16,
+    textAlign: 'center',
+    color: '#c0392b',
+    fontSize: 14,
+  },
+  savedDone: {
+    marginTop: 14,
+    padding: 12,
+    alignItems: 'center',
+  },
+  savedDoneText: {
+    color: '#007bff',
+    fontSize: 17,
+    fontWeight: '700',
+  },
   backIcon: { 
     width: 40, height: 40, resizeMode: 'contain'
   },
@@ -1476,7 +1779,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    paddingTop: 50,
+    // iOS: clear the notch. Android: modals already start below the status
+    // bar, so 50 left a blank band there.
+    paddingTop: Platform.OS === 'ios' ? 50 : 16,
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',
     backgroundColor: '#fff',

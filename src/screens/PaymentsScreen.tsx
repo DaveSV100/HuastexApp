@@ -12,11 +12,13 @@ import {
   ScrollView,
   Platform,
   PermissionsAndroid,
+  TextInput,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ViewShot from 'react-native-view-shot';
-import { CameraRoll } from '@react-native-camera-roll/camera-roll';
+import { saveImageToGallery } from '../utils/gallery';
 import api from '../api';
 import PrintTicketModal from '../components/PrintTicketModal';
 import ReceiptTicket from '../components/ReceiptTicket';
@@ -60,6 +62,12 @@ export default function PaymentsScreen(): React.JSX.Element {
   const [isSavingImage, setIsSavingImage] = useState(false);
   const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
   const receiptRef = useRef<any>(null);
+  // Abono being edited (null = edit modal closed).
+  const [editPayment, setEditPayment] = useState<Payment | null>(null);
+  const [editForm, setEditForm] = useState({ fecha: '', cantidad: '', cajero: '' });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [showEditDatePicker, setShowEditDatePicker] = useState(false);
+  const [editTempDate, setEditTempDate] = useState<Date>(new Date());
 
   const handleSendPaymentImageWhatsApp = async () => {
     if (!receiptRef.current) return;
@@ -91,7 +99,7 @@ export default function PaymentsScreen(): React.JSX.Element {
         }
       }
       const uri = await receiptRef.current.capture();
-      await CameraRoll.saveAsset(uri, { type: 'photo' });
+      await saveImageToGallery(uri);
       Alert.alert('Éxito', 'El abono se guardó como imagen en tu galería.');
       setDownloadPayment(null);
     } catch (err) {
@@ -110,9 +118,9 @@ export default function PaymentsScreen(): React.JSX.Element {
   const fetchPayments = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`https://api.huastex.com/payments/${saleId}`);
-      const result = await response.json();
-      setPayments(result);
+      // Through the shared client (API_BASE + auth token), not a hardcoded URL.
+      const response = await api.get(`/payments/${saleId}`);
+      setPayments(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Error fetching payments:', error);
       Alert.alert('Error', 'No se pudieron cargar los pagos');
@@ -169,6 +177,67 @@ export default function PaymentsScreen(): React.JSX.Element {
     return `${day}/${month}/${year}`;
   };
 
+  const toDateInputValue = (isoDateStr: string) => {
+    if (!isoDateStr) return '';
+    return isoDateStr.split('T')[0];
+  };
+
+  const formatDateForApi = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const openEdit = (payment: Payment) => {
+    setEditForm({
+      fecha: toDateInputValue(payment.fecha),
+      cantidad: String(payment.cantidad),
+      cajero: payment.cajero || '',
+    });
+    setEditPayment(payment);
+    setShowEditDatePicker(false);
+  };
+
+  const handleEditDateChange = (event: any, date?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowEditDatePicker(false);
+      if (date && event.type !== 'dismissed') {
+        setEditForm(prev => ({ ...prev, fecha: formatDateForApi(date) }));
+      }
+    } else if (date) {
+      setEditTempDate(date);
+    }
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editPayment) return;
+    const amount = parseFloat(editForm.cantidad);
+    if (!editForm.fecha || isNaN(amount) || amount < 0 || !editForm.cajero.trim()) {
+      Alert.alert('Error', 'Completa fecha, cantidad y cajero válidos');
+      return;
+    }
+    setIsSavingEdit(true);
+    try {
+      // The server keeps everything in sync: this payment, later abonos'
+      // saldos, the sale's saldos and the daily-report row.
+      await api.put(`/payments/${editPayment.id}`, {
+        fecha: editForm.fecha,
+        cantidad: amount,
+        cajero: editForm.cajero.trim(),
+      });
+      setEditPayment(null);
+      fetchPayments();
+      fetchSale();
+      Alert.alert('Éxito', 'Abono actualizado');
+    } catch (err) {
+      console.error('Error updating payment:', err);
+      Alert.alert('Error', 'No se pudo actualizar el abono');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   const canDelete = role === 'admin' || role === 'superadmin' || role === 'staff' || role === 'iT';
 
   const renderPaymentItem = ({ item }: { item: Payment }) => (
@@ -222,6 +291,15 @@ export default function PaymentsScreen(): React.JSX.Element {
 
       {canDelete && (
         <TouchableOpacity
+          style={styles.editButton}
+          onPress={() => openEdit(item)}
+        >
+          <Text style={styles.printButtonText}>Editar</Text>
+        </TouchableOpacity>
+      )}
+
+      {canDelete && (
+        <TouchableOpacity
           style={styles.deleteButton}
           onPress={() => handleDelete(item)}
         >
@@ -268,6 +346,115 @@ export default function PaymentsScreen(): React.JSX.Element {
           ListEmptyComponent={renderEmpty}
           contentContainerStyle={styles.listContent}
         />
+      )}
+
+      {editPayment && (
+        <Modal
+          visible
+          animationType="slide"
+          transparent
+          onRequestClose={() => setEditPayment(null)}
+        >
+          <View style={styles.editOverlay}>
+            <View style={styles.editModal}>
+              <View style={styles.editHeader}>
+                <Text style={styles.editHeaderTitle}>
+                  Editar Abono #{editPayment.id}
+                </Text>
+                <TouchableOpacity onPress={() => setEditPayment(null)}>
+                  <Text style={styles.downloadCloseButton}>Cerrar</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.editForm}>
+                <Text style={styles.editLabel}>Fecha *</Text>
+                <TouchableOpacity
+                  style={styles.editInput}
+                  onPress={() => {
+                    setEditTempDate(
+                      editForm.fecha ? new Date(editForm.fecha) : new Date(),
+                    );
+                    setShowEditDatePicker(true);
+                  }}
+                >
+                  <Text style={styles.editDateText}>
+                    {editForm.fecha || 'Seleccionar fecha'}
+                  </Text>
+                </TouchableOpacity>
+
+                {showEditDatePicker && (
+                  <View style={styles.editDatePickerContainer}>
+                    <DateTimePicker
+                      value={editTempDate}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      onChange={handleEditDateChange}
+                      themeVariant="light"
+                    />
+                    {Platform.OS === 'ios' && (
+                      <View style={styles.editDateButtonsRow}>
+                        <TouchableOpacity
+                          style={styles.editDateCancelButton}
+                          onPress={() => setShowEditDatePicker(false)}
+                        >
+                          <Text style={styles.editDateButtonLabel}>Cancelar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.editDateConfirmButton}
+                          onPress={() => {
+                            setEditForm(prev => ({
+                              ...prev,
+                              fecha: formatDateForApi(editTempDate),
+                            }));
+                            setShowEditDatePicker(false);
+                          }}
+                        >
+                          <Text style={styles.editDateButtonLabel}>Confirmar</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                <Text style={styles.editLabel}>Cantidad *</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editForm.cantidad}
+                  onChangeText={(value) =>
+                    setEditForm(prev => ({ ...prev, cantidad: value }))
+                  }
+                  keyboardType="numeric"
+                  placeholder="0.00"
+                />
+
+                <Text style={styles.editLabel}>Cajero *</Text>
+                <TextInput
+                  style={styles.editInput}
+                  value={editForm.cajero}
+                  onChangeText={(value) =>
+                    setEditForm(prev => ({ ...prev, cajero: value }))
+                  }
+                  placeholder="Nombre del cajero"
+                />
+
+                <TouchableOpacity
+                  style={[
+                    styles.editSaveButton,
+                    isSavingEdit && styles.saveImageButtonDisabled,
+                  ]}
+                  onPress={handleSaveEdit}
+                  disabled={isSavingEdit}
+                >
+                  {isSavingEdit ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.saveImageButtonText}>Guardar cambios</Text>
+                  )}
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
       )}
 
       {printPayment && (
@@ -444,7 +631,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    paddingTop: 50,
+    // iOS: clear the notch. Android: modals already start below the status
+    // bar, so 50 left a blank band there.
+    paddingTop: Platform.OS === 'ios' ? 50 : 16,
     borderBottomWidth: 1,
     borderBottomColor: '#ddd',
     backgroundColor: '#fff',
@@ -491,6 +680,97 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     fontSize: 14,
+  },
+  editButton: {
+    backgroundColor: '#007bff',
+    padding: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  editOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  editModal: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    width: '90%',
+    maxHeight: '80%',
+  },
+  editHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+  },
+  editHeaderTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  editForm: {
+    padding: 16,
+  },
+  editLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 12,
+    marginBottom: 4,
+    color: '#333',
+  },
+  editInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fff',
+  },
+  editDateText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  editDatePickerContainer: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    marginTop: 8,
+    padding: 8,
+  },
+  editDateButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  editDateCancelButton: {
+    flex: 1,
+    backgroundColor: '#6c757d',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  editDateConfirmButton: {
+    flex: 1,
+    backgroundColor: '#007bff',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  editDateButtonLabel: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  editSaveButton: {
+    backgroundColor: '#28a745',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 20,
   },
   deleteButton: {
     backgroundColor: '#dc3545',

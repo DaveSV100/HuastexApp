@@ -11,6 +11,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../contexts/AuthContext';
 import api from '../api';
+import CustomerSaleCard from '../components/CustomerSaleCard';
 
 export default function HomeScreen(): React.JSX.Element {
   const { user } = useContext(AuthContext);
@@ -22,14 +23,14 @@ export default function HomeScreen(): React.JSX.Element {
   // Check if user has staff/admin roles
   const hasStaffAccess = ['admin', 'superadmin', 'staff', 'iT'].includes(user?.role);
 
-  // Fetch sales on mount
+  // Fetch sales on mount. /sales/mine returns only this user's sales,
+  // without signatures: downloading every sale (GET /sales) on each app start
+  // was huge and slow, and customers aren't allowed to call it at all.
   useEffect(() => {
     const fetchSales = async () => {
       try {
-        const response = await api.get('/sales');
-        // Filter sales by user's email
-        const userSales = response.data.filter(sale => sale.email === user?.email);
-        setSales(userSales);
+        const response = await api.get('/sales/mine');
+        setSales(Array.isArray(response.data) ? response.data : []);
       } catch (error) {
         console.error('Error fetching sales:', error);
       } finally {
@@ -39,42 +40,6 @@ export default function HomeScreen(): React.JSX.Element {
 
     fetchSales();
   }, [user?.email]);
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '';
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('es-ES', { timeZone: 'UTC' });
-  };
-
-  const formatProductTitles = (products) => {
-    if (!products) return '';
-    return products
-      .filter(product => product !== null)
-      .map(product => product.title || product.producto || 'Sin nombre')
-      .join(', ');
-  };
-
-  const renderSaleItem = ({ item }) => (
-    <View style={styles.saleCard}>
-      <Text style={styles.saleId}>Pedido #{item.id}</Text>
-      <Text style={styles.saleDetail}>
-        <Text style={styles.label}>Productos: </Text>
-        {formatProductTitles(item.products)}
-      </Text>
-      <Text style={styles.saleDetail}>
-        <Text style={styles.label}>Fecha: </Text>
-        {formatDate(item.fecha)}
-      </Text>
-      <Text style={styles.saleDetail}>
-        <Text style={styles.label}>Total: </Text>
-        ${item.total_price}
-      </Text>
-      <Text style={styles.saleDetail}>
-        <Text style={styles.label}>Estado: </Text>
-        {item.formadepago}
-      </Text>
-    </View>
-  );
 
   return (
     <View style={styles.container}>
@@ -99,7 +64,22 @@ export default function HomeScreen(): React.JSX.Element {
             <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Dashboard')}>
               <Text style={styles.menuButtonText}>Dashboard</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Expenses')}>
+              <Text style={styles.menuButtonText}>Gastos</Text>
+            </TouchableOpacity>
           </>
+        )}
+
+        {['admin', 'superadmin', 'iT'].includes(user?.role) && (
+          <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('ProductsUpload')}>
+            <Text style={styles.menuButtonText}>Upload</Text>
+          </TouchableOpacity>
+        )}
+
+        {user?.role === 'superadmin' && (
+          <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Users')}>
+            <Text style={styles.menuButtonText}>Usuarios</Text>
+          </TouchableOpacity>
         )}
 
         <TouchableOpacity style={styles.menuButton} onPress={() => navigation.navigate('Perfil')}>
@@ -115,8 +95,8 @@ export default function HomeScreen(): React.JSX.Element {
           <ActivityIndicator size="large" color="rgb(122,149,172)" />
         ) : sales.length > 0 ? (
           <FlatList
-            data={sales.sort((a, b) => b.id - a.id)}
-            renderItem={renderSaleItem}
+            data={[...sales].sort((a, b) => b.id - a.id)}
+            renderItem={({ item }) => <CustomerSaleCard sale={item} />}
             keyExtractor={(item) => item.id.toString()}
             style={styles.salesList}
           />
@@ -182,28 +162,6 @@ const styles = StyleSheet.create({
   },
   salesList: {
     flex: 1,
-  },
-  saleCard: {
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    padding: 15,
-    marginBottom: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: 'rgb(122,149,172)',
-  },
-  saleId: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    color: 'rgb(122,149,172)',
-  },
-  saleDetail: {
-    fontSize: 14,
-    marginBottom: 4,
-    color: '#333',
-  },
-  label: {
-    fontWeight: 'bold',
   },
   noSalesContainer: {
     flex: 1,

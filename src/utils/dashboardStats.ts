@@ -41,8 +41,13 @@ export function computeDashboardStats(
   branch: string, // slug, or 'all'
   todayIso: string, // local YYYY-MM-DD
   branches: string[] = DASHBOARD_BRANCHES,
+  // Month the "Este mes" / "Por sucursal" figures cover (YYYY-MM). Defaults to
+  // todayIso's month; the dashboard's month picker passes a past month here so
+  // those sections can be read historically while the "Hoy" figures above them
+  // stay on the real today.
+  monthKey?: string,
 ): DashboardStats {
-  const month = monthOf(todayIso);
+  const month = monthKey || monthOf(todayIso);
   const inBranch = (slug: string) => branch === 'all' || slug === branch;
 
   const branchSales = (sales || []).filter(
@@ -156,6 +161,42 @@ const MONTHS_ES = [
   'dic',
 ];
 
+const MONTHS_ES_LONG = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
+];
+
+/** "2025-09" → "Septiembre 2025", for the month picker and section titles. */
+export function monthTitle(key: string): string {
+  const [year, month] = key.split('-').map(Number);
+  return `${MONTHS_ES_LONG[(month || 1) - 1] || key} ${year}`;
+}
+
+/** Short Spanish month name by 1-based number: 9 → "sep". */
+export const monthShortName = (month: number): string =>
+  MONTHS_ES[month - 1] || String(month);
+
+/** Local YYYY-MM for a Date (never UTC — matches getLocalDateString). */
+export function monthKeyOf(date: Date = new Date()): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Step a YYYY-MM key by `delta` months, staying calendar-correct. */
+export function shiftMonthKey(key: string, delta: number): string {
+  const [y, m] = key.split('-').map(Number);
+  return monthKeyOf(new Date(y, m - 1 + delta, 1));
+}
+
 export interface MonthNeto {
   /** YYYY-MM */
   month: string;
@@ -166,42 +207,134 @@ export interface MonthNeto {
 }
 
 /**
+ * The `count` month keys (YYYY-MM) ending at `anchorMonth` inclusive, oldest
+ * first — the shared window definition for every month-over-month chart.
+ */
+export function monthWindowKeys(anchorMonth: string, count = 6): string[] {
+  const [y, m] = anchorMonth.split('-').map(Number);
+  const keys: string[] = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const date = new Date(y, m - 1 - i, 1);
+    keys.push(
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
+    );
+  }
+  return keys;
+}
+
+/**
  * Neto (ingresos − egresos) per month for the trailing `months` window
- * ending at `todayIso`'s month (inclusive), oldest first — feeds the
+ * ending at `anchorIso`'s month (inclusive), oldest first — feeds the
  * dashboard's month-over-month comparison chart.
+ *
+ * `todayIso` only decides which labels get a `'YY` suffix (months outside the
+ * real current year), so a window anchored in the past stays unambiguous.
  */
 export function netoLastMonths(
   transactions: any[],
   branch: string,
-  todayIso: string,
+  anchorIso: string,
   months = 6,
+  todayIso: string = anchorIso,
 ): MonthNeto[] {
-  const [y, m] = todayIso.split('-').map(Number);
   const inBranch = (slug: string) => branch === 'all' || slug === branch;
   const rows = (transactions || []).filter(
     t => t && inBranch(branchSlug(t.location)),
   );
 
-  const result: MonthNeto[] = [];
-  for (let i = months - 1; i >= 0; i--) {
-    const date = new Date(y, m - 1 - i, 1);
-    const year = date.getFullYear();
-    const key = `${year}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    const total = rows
+  return monthWindowKeys(monthOf(anchorIso), months).map(key => ({
+    month: key,
+    label: monthLabelFromKey(key, todayIso),
+    total: rows
       .filter(t => monthOf(t.transaction_date) === key)
       .reduce((sum, t) => {
         const value = Number(t.value) || 0;
         if (t.transaction_type === 'income') return sum + value;
         if (t.transaction_type === 'outcome') return sum - value;
         return sum;
-      }, 0);
-    const label =
-      year === y
-        ? MONTHS_ES[date.getMonth()]
-        : `${MONTHS_ES[date.getMonth()]} '${String(year).slice(-2)}`;
-    result.push({ month: key, label, total });
-  }
-  return result;
+      }, 0),
+  }));
+}
+
+/** "2026-07" → "jul" (adds 'YY when the month isn't in todayIso's year). */
+export function monthLabelFromKey(key: string, todayIso: string): string {
+  const [year, month] = key.split('-').map(Number);
+  const currentYear = Number(todayIso.slice(0, 4));
+  const short = MONTHS_ES[(month || 1) - 1] || key;
+  return year === currentYear ? short : `${short} '${String(year).slice(-2)}`;
+}
+
+/**
+ * Income (only) per month for the trailing `months` window ending at
+ * `anchorIso`'s month, oldest first — combined with the /expenses endpoint it
+ * feeds the "Ganancias por mes" chart (ganancias = ingresos − gastos).
+ */
+export function incomeLastMonths(
+  transactions: any[],
+  branch: string,
+  anchorIso: string,
+  months = 6,
+  todayIso: string = anchorIso,
+): MonthNeto[] {
+  const inBranch = (slug: string) => branch === 'all' || slug === branch;
+  const incomes = (transactions || []).filter(
+    t =>
+      t &&
+      t.transaction_type === 'income' &&
+      inBranch(branchSlug(t.location)),
+  );
+
+  return monthWindowKeys(monthOf(anchorIso), months).map(key => ({
+    month: key,
+    label: monthLabelFromKey(key, todayIso),
+    total: incomes
+      .filter(t => monthOf(t.transaction_date) === key)
+      .reduce((sum, t) => sum + (Number(t.value) || 0), 0),
+  }));
+}
+
+/** Server /expenses/monthly row shape. */
+export interface ExpensesMonth {
+  month: string;
+  total: number;
+  byBranch: Record<string, number>;
+}
+
+/**
+ * Slice the (dense, oldest-first) /expenses/monthly response down to the
+ * `count` months ending at `anchorMonth`. The endpoint only ever returns a
+ * window trailing *today*, so months the server didn't cover — and any gap —
+ * come back as zeros rather than shifting the series out of alignment with
+ * the transaction-derived charts beside it.
+ */
+export function expensesWindow(
+  months: ExpensesMonth[],
+  anchorMonth: string,
+  count = 6,
+): ExpensesMonth[] {
+  const byMonth = new Map((months || []).map(m => [m.month, m]));
+  return monthWindowKeys(anchorMonth, count).map(
+    key => byMonth.get(key) || { month: key, total: 0, byBranch: {} },
+  );
+}
+
+/**
+ * Project the /expenses/monthly response onto a branch selection:
+ * 'all' → grand total per month, otherwise that branch's figure.
+ */
+export function expensesSeries(
+  months: ExpensesMonth[],
+  branch: string,
+  todayIso: string,
+): MonthNeto[] {
+  return (months || []).map(m => ({
+    month: m.month,
+    label: monthLabelFromKey(m.month, todayIso),
+    total:
+      branch === 'all'
+        ? Number(m.total) || 0
+        : Number(m.byBranch?.[branch]) || 0,
+  }));
 }
 
 /**

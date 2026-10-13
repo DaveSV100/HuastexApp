@@ -14,6 +14,7 @@ import {
   ScrollView,
   SafeAreaView,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
@@ -33,6 +34,15 @@ const paymentTypeLabels: Record<string, string> = {
   cash_deposit: 'Depósito en efectivo',
 };
 
+const BRANCHES = ['all', 'aquismon', 'cerroazul', 'tepetzintla', 'tlacolula'];
+const BRANCH_LABELS: Record<string, string> = {
+  all: 'Todas',
+  aquismon: 'Aquismón',
+  cerroazul: 'Cerro Azul',
+  tepetzintla: 'Tepetzintla',
+  tlacolula: 'Tlacolula',
+};
+
 function getLocalDateString(date: Date = new Date()) {
   const y = date.getFullYear();
   const m = ('0' + (date.getMonth() + 1)).slice(-2);
@@ -42,6 +52,12 @@ function getLocalDateString(date: Date = new Date()) {
 
 export default function ReportScreen() {
   const navigation = useNavigation();
+  // Android draws the picker's text at the user's system font size, but its
+  // box had a fixed height, so larger fonts cut off the bottom of the branch
+  // name. Grow the box with the font scale (iOS uses its own wheel height).
+  const { fontScale } = useWindowDimensions();
+  const androidPickerSize =
+    Platform.OS === 'android' ? { height: Math.ceil(52 * Math.max(1, fontScale)) } : null;
 
   // Real role/branch from the signed-in session (set at login from the JWT).
   // Previously hardcoded to 'admin'/'aquismon', which faked the UI gating.
@@ -311,8 +327,11 @@ export default function ReportScreen() {
     finally { setSaving(false) }
   }
 
-  // Header component for the FlatList (non-scrollable content above the list)
-  const ListHeader = () => (
+  // Header for the FlatList (non-scrollable content above the list). An
+  // element, not an inline component: a component defined here is a new type
+  // on every render, so React remounted the whole header (and its native
+  // picker) each time the data changed.
+  const listHeader = (
     <View>
       <TouchableOpacity onPress={() => navigation.goBack()}>
         <Image source={require('../../Assets/back.png')} style={styles.back} />
@@ -321,26 +340,37 @@ export default function ReportScreen() {
       <View style={styles.filters}>
         <View style={styles.filterCol}>
           <Text style={styles.label}>Sucursal:</Text>
-          <View style={styles.pickerBox}>
-            <Picker
-              selectedValue={selectedLocation}
-              onValueChange={v => setSelectedLocation(v)}
-              enabled={role === 'admin' || role === 'superadmin'}
-              style={styles.picker}
-              itemStyle={styles.pickerItem}
-              mode="dropdown"
-              dropdownIconColor="#333"
-            >
-              {/* admin/superadmin can inspect any branch; staff/iT are limited to
-                  their own (an empty list if their session has no branch). */}
-              {(isPinnedToBranch
-                ? [userBranch].filter(Boolean)
-                : ['all', 'aquismon', 'cerroazul', 'tepetzintla', 'tlacolula']
-              ).map(loc => (
-                <Picker.Item key={loc} label={loc} value={loc} color="#000" />
-              ))}
-            </Picker>
-          </View>
+          {/* Rendered only once the session is known, so the picker's items
+              never change under it: shrinking the 5-branch list to the
+              user's one branch crashed iOS (UIPickerView asked for row 1 of
+              a 1-item list) — staff/iT can't switch branch anyway, so they
+              just get a label. */}
+          {!sessionLoaded ? null : isPinnedToBranch ? (
+            <Text style={styles.branchFixed}>
+              {BRANCH_LABELS[userBranch] || userBranch || '—'}
+            </Text>
+          ) : (
+            <View style={styles.pickerBox}>
+              <Picker
+                selectedValue={selectedLocation}
+                onValueChange={v => setSelectedLocation(v)}
+                enabled={role === 'admin' || role === 'superadmin'}
+                style={[styles.picker, androidPickerSize]}
+                itemStyle={styles.pickerItem}
+                mode="dropdown"
+                dropdownIconColor="#333"
+              >
+                {BRANCHES.map(loc => (
+                  <Picker.Item
+                    key={loc}
+                    label={BRANCH_LABELS[loc]}
+                    value={loc}
+                    color="#000"
+                  />
+                ))}
+              </Picker>
+            </View>
+          )}
           <View style={styles.editAccountingBtn}>
             <Button
               title="Editar Contabilidad"
@@ -426,7 +456,7 @@ export default function ReportScreen() {
             </View>
           );
         }}
-        ListHeaderComponent={<ListHeader />}
+        ListHeaderComponent={listHeader}
         contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
         // optional: small optimization
         initialNumToRender={10}
@@ -568,6 +598,18 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   pickerItem: { fontSize: 16, height: 120 },
+  branchFixed: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 4,
+    backgroundColor: '#f5f5f5',
+    alignSelf: 'flex-start',
+  },
   dateBtn: { padding: 8, borderWidth: 1, borderColor: '#ccc', borderRadius: 4 },
   totals: { marginTop: 8 },
   net: { fontWeight: 'bold', fontSize: 16 },

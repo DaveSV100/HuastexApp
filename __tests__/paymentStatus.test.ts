@@ -91,6 +91,15 @@ describe('pagos de', () => {
     expect(info.pagosDe).toBe(5500);
     expect(info.periodLabel).toBeNull();
   });
+
+  it('a hand-typed pagos_de saved with the sale wins over the calculation', () => {
+    // pg returns NUMERIC as a string
+    const info = getPaymentInfo({ ...baseSale, pagos_de: '250.00' }, NOW);
+    expect(info.pagosDe).toBe(250);
+    expect(info.periodLabel).toBe('semana(s)');
+    // NULL (not typed by hand) keeps the calculated installment
+    expect(getPaymentInfo({ ...baseSale, pagos_de: null }, NOW).pagosDe).toBe(200);
+  });
 });
 
 describe('estado', () => {

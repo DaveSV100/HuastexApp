@@ -1,5 +1,6 @@
 package com.huastexapp
 
+import android.os.Bundle
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -12,6 +13,16 @@ class MainActivity : ReactActivity() {
    * rendering of the component.
    */
   override fun getMainComponentName(): String = "HuastexApp"
+
+  /**
+   * react-native-screens: screen fragments must never be restored from saved
+   * state. When Android recreates the activity (system font size change, or the
+   * app killed in the background and reopened) it crashed with "Screen fragments
+   * should never be restored"; passing null makes it start fresh instead.
+   */
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(null)
+  }
 
   /**
    * Returns the instance of the [ReactActivityDelegate]. We use [DefaultReactActivityDelegate]
